@@ -18,6 +18,8 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
+import org.json.JSONObject;
+
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
@@ -131,7 +133,7 @@ public class AndroidCalendarPlugin extends Plugin {
         Set<String> keep = new HashSet<>();
         try {
             for (int i = 0; i < events.length(); i++) {
-                JSObject ev = events.getJSONObject(i);
+                JSONObject ev = events.getJSONObject(i);
                 String spaceId = ev.getString("id");
                 if (spaceId == null) continue;
                 keep.add(spaceId);
@@ -177,7 +179,7 @@ public class AndroidCalendarPlugin extends Plugin {
         call.resolve(ret);
     }
 
-    private ContentValues toValues(long calId, JSObject ev, SimpleDateFormat df, String tzid) throws Exception {
+    private ContentValues toValues(long calId, JSONObject ev, SimpleDateFormat df, String tzid) throws Exception {
         ContentValues cv = new ContentValues();
         cv.put(Events.CALENDAR_ID, calId);
         cv.put(Events.TITLE, ev.optString("title", "共享日程"));
@@ -233,8 +235,12 @@ public class AndroidCalendarPlugin extends Plugin {
         cv.put(Calendars.SYNC_EVENTS, 1);
         cv.put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_OWNER);
         cv.put(Calendars.OWNER_ACCOUNT, ACCOUNT_NAME);
-        Uri u = getContext().getContentResolver().insert(
-                Calendars.CONTENT_URI.asSyncAdapter(ACCOUNT_NAME, ACCOUNT_TYPE), cv);
+        Uri calUri = Calendars.CONTENT_URI.buildUpon()
+                .appendQueryParameter(CalendarContract.CALLER_IS_SYNCADAPTER, "true")
+                .appendQueryParameter(Calendars.ACCOUNT_NAME, ACCOUNT_NAME)
+                .appendQueryParameter(Calendars.ACCOUNT_TYPE, ACCOUNT_TYPE)
+                .build();
+        Uri u = getContext().getContentResolver().insert(calUri, cv);
         return ContentUris.parseId(u);
     }
 }
