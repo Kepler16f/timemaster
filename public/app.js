@@ -129,7 +129,7 @@ $('#otpSendBtn').onclick=async()=>{
     await Auth.sendOtp(email);
     $('#otpCodeWrap').classList.remove('hidden'); $('#otpVerifyBtn').classList.remove('hidden');
     $('#otpCode').focus();
-    toast('验证码已发到邮箱，6 位数字');
+    toast('验证码已发到邮箱，请查收');
   }catch(e){ toast(e.message); }
   finally{ btn.disabled=false; }
 };

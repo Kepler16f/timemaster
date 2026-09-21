@@ -6,7 +6,10 @@
   const SESSION_KEY = 'tm:auth:session';
 
   /* 开发者一次性内置（发布前替换为真实项目值）；终端用户零配置 */
-  const DEFAULT_SUPA = { url: '', anon: '' };
+  const DEFAULT_SUPA = {
+    url: 'https://ruwdnrousioplhyfqvfb.supabase.co',
+    anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ1d2Rucm91c2lvcGxoeWZxdmZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5OTc1OTMsImV4cCI6MjEwNTU3MzU5M30.m5H3BELx1zw2irBz_yBzYadRFs23BGWm165wr8X-1L4',
+  };
 
   function cfg() {
     try {
