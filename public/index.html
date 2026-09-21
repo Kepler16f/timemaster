@@ -142,11 +142,12 @@
       </label>
       <button class="big-btn ghost" id="sysImportBtn">📥 直接读取系统日历（App 内）</button>
       <button class="big-btn ghost" id="writeBackBtn">📤 把空间日程回写到系统日历</button>
+      <button class="big-btn ghost warn hidden" id="permBtn">⚠️ 日历权限未开启，点击去系统设置</button>
       <details class="export-help">
         <summary>📱 鸿蒙 / 安卓 如何导出「全部账户」日程？</summary>
         <p><b>鸿蒙（华为）：</b>打开「日历」→ 右上角四个点 / 设置 → 找到「导出」或「备份与恢复」→ 导出为 .ics，选择 <b>全部账户</b>。把文件发到自己微信/邮箱，下载后用本 APP 上传即可。</p>
         <p><b>安卓（Google 日历 / 厂商日历）：</b>Google 日历在电脑网页版可逐个日历「导出」；手机端多在「设置 → 导出」里勾选所有账户。若日程存在本地或其他 APP 写入的账户，导出时记得全选。</p>
-        <p class="import-tip warn">⚠️ 网页 APP 受手机系统权限限制，无法直接读取系统日历，只能靠导出 .ics 再导入——这是目前能把所有账户日程「全量」拿进来的最稳方式。</p>
+        <p class="import-tip warn">⚠️ 优先使用上方「直接读取系统日历」；导出 .ics 是在无法授权时的备用全量导入方式。</p>
       </details>
       <div class="modal-actions">
         <button id="importCancel" class="action-btn">取消</button>

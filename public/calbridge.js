@@ -6,8 +6,16 @@
 
   async function ensurePermission() {
     if (!Cal) throw new Error('系统日历同步需在 App 内使用');
-    await Cal.ensurePermission();
+    try {
+      await Cal.ensurePermission();
+    } catch (e) {
+      const err = new Error('未获得日历权限：请在系统设置 → 应用 → 时间管理大师 → 权限中开启「日历」');
+      err.needSettings = true;
+      throw err;
+    }
   }
+
+  function openSettings() { if (Cal) Cal.openSettings(); }
 
   /* 拉取系统日程 → 空间事件格式（sourceUid 去重已内建） */
   async function fetchEvents(fromMs, toMs) {
@@ -33,5 +41,5 @@
     });
   }
 
-  window.CalBridge = { available: () => !!Cal, ensurePermission, fetchEvents, writeBack };
+  window.CalBridge = { available: () => !!Cal, ensurePermission, fetchEvents, writeBack, openSettings };
 })();

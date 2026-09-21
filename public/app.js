@@ -273,10 +273,11 @@ function fillImportOwner(){
   });
   sel.value=App.clientId;
 }
-$('#importBtn').onclick=()=>{ fillImportOwner(); $('#importModal').hidden=false; };
+$('#importBtn').onclick=()=>{ fillImportOwner(); $('#permBtn').hidden=true; $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
 
 /* 直接读取系统日历（原生桥） */
+$('#permBtn').onclick=()=>CalBridge.openSettings();
 $('#sysImportBtn').onclick=async()=>{
   if(!state.code) return;
   try{
@@ -288,7 +289,7 @@ $('#sysImportBtn').onclick=async()=>{
     Store.addEvents(state.code, list, $('#importOwner').value||App.clientId);
     toast(`已导入 ${list.length} 条系统日程`);
     $('#importModal').hidden=true;
-  }catch(e){ toast(e.message); }
+  }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
 };
 
 /* 回写：空间内可见日程 → 系统「共享日程」独立日历 */
@@ -303,7 +304,7 @@ $('#writeBackBtn').onclick=async()=>{
     const r=await CalBridge.writeBack(list);
     toast(`已回写系统日历：更新 ${r.upserted} 条，清理 ${r.removed} 条`);
     $('#importModal').hidden=true;
-  }catch(e){ toast(e.message); }
+  }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
 };
 $('#importSave').onclick=async()=>{
   const f=$('#icsFile'); if(!f.files.length) return toast('请选择 .ics 文件');

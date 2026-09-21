@@ -1,13 +1,20 @@
 package com.timemaster.app;
 
+import android.Manifest;
 import android.content.ContentUris;
 import android.content.ContentValues;
+import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.provider.CalendarContract;
 import android.provider.CalendarContract.Calendars;
 import android.provider.CalendarContract.Events;
+import android.provider.Settings;
+
+import androidx.core.app.ActivityCompat;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -49,20 +56,39 @@ public class AndroidCalendarPlugin extends Plugin {
     private static final String PREFS = "tm_syscal";
     private static final long DAY = 86400000L;
 
+    /**
+     * 注意：Capacitor 的 Plugin.hasPermission(String) 接收的是 Android 权限字符串而不是 alias，
+     * 传 alias 会永远返回 false（已授权也提示无权限），因此这里直接用系统 API 检查真实授权状态。
+     */
     @PluginMethod
     public void ensurePermission(PluginCall call) {
-        String alias = "calendar";
-        if (hasPermission(alias)) {
+        if (calendarGranted()) {
             call.resolve();
             return;
         }
-        requestPermissionForAlias(alias, call, "permissionCb");
+        requestPermissionForAlias("calendar", call, "permissionCb");
     }
 
     @PermissionCallback
     private void permissionCb(PluginCall call) {
-        if (hasPermission("calendar")) call.resolve();
-        else call.reject("需要日历权限才能同步系统日程");
+        if (calendarGranted()) call.resolve();
+        else call.reject("未获得日历权限，请在系统设置中开启");
+    }
+
+    private boolean calendarGranted() {
+        Context c = getContext();
+        return ActivityCompat.checkSelfPermission(c, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED
+                && ActivityCompat.checkSelfPermission(c, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** 跳到本 App 的系统设置页（权限被永久拒绝时引导用户手动开启） */
+    @PluginMethod
+    public void openSettings(PluginCall call) {
+        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", getContext().getPackageName(), null));
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(i);
+        call.resolve();
     }
 
     @PluginMethod
