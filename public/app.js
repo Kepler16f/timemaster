@@ -2,6 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
+const APP_VERSION = '0.0.5';
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
@@ -33,54 +34,108 @@ function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('sh
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function shade(hex,p){ const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255; r=Math.max(0,Math.min(255,r+p)); g=Math.max(0,Math.min(255,g+p)); b=Math.max(0,Math.min(255,b+p)); return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
 function genCode() { const b = new Uint8Array(4); crypto.getRandomValues(b); return Array.from(b, x=>x.toString(16).padStart(2,'0')).join('').toUpperCase(); }
-function needDav(){ if(!Dav.cfg()){ toast('请先配置网盘'); openDavModal(); return false; } return true; }
+function needDav(){ if(!Dav.cfg() || !Dav.cfg().user || !Dav.cfg().pass){ toast('请先在设置中配置网盘'); openSettings(); return false; } return true; }
+
+function uiConfirm(title, text, yesText){
+  return new Promise((res)=>{
+    $('#confirmTitle').textContent=title; $('#confirmText').textContent=text; $('#confirmYes').textContent=yesText||'确认';
+    $('#confirmModal').hidden=false;
+    $('#confirmYes').onclick=()=>{ $('#confirmModal').hidden=true; res(true); };
+    $('#confirmNo').onclick=()=>{ $('#confirmModal').hidden=true; res(false); };
+  });
+}
 
 function showScreen(name){
-  ['startScreen','calendarScreen'].forEach(s=>$('#'+s).classList.add('hidden'));
+  ['startScreen','calendarScreen','settingsScreen'].forEach(s=>$('#'+s).classList.add('hidden'));
   $('#'+name).classList.remove('hidden');
 }
 
-/* ---------- 起始屏 ---------- */
-function buildMyColorPicker(){
-  const box=$('#myColorPicker'); box.innerHTML='';
+/* ---------- 资料（起始屏与设置页共用一份状态，双向刷新） ---------- */
+function buildColorPicker(box){
+  box.innerHTML='';
   PALETTE.forEach(c=>{
     const sw=document.createElement('div'); sw.className='color-swatch'+(c===App.me.color?' sel':'');
-    sw.style.background=c; sw.onclick=()=>{ App.me.color=c; localStorage.setItem('tm:myColor',c); buildMyColorPicker(); };
+    sw.style.background=c;
+    sw.onclick=()=>{ App.me.color=c; localStorage.setItem('tm:myColor',c); refreshProfile(); if(state.code && Store.get(state.code)) Store.setProfile(state.code); };
     box.appendChild(sw);
   });
 }
+function refreshProfile(){
+  ['#myName','#setName'].forEach(s=>{ const el=$(s); if(el && el!==document.activeElement) el.value=App.me.name; });
+  buildColorPicker($('#myColorPicker')); buildColorPicker($('#setColorPicker'));
+}
+function onNameInput(e){
+  App.me.name = e.target.value.trim() || App.me.name;
+  localStorage.setItem('tm:myName', App.me.name);
+  const other = e.target.id==='myName' ? $('#setName') : $('#myName');
+  if(other && other!==document.activeElement) other.value=App.me.name;
+  if(state.code && Store.get(state.code)) Store.setProfile(state.code);
+}
+
+/* ---------- 起始屏 ---------- */
 function initStart(){
   stopPolling();
-  $('#myName').value = App.me.name;
-  $('#myName').oninput = (e)=>{ App.me.name=e.target.value.trim()||App.me.name; localStorage.setItem('tm:myName', App.me.name); if(state.code && Store.get(state.code)) Store.setProfile(state.code); };
-  buildMyColorPicker();
+  refreshProfile();
   const last = localStorage.getItem('tm:lastSpace');
   $('#lastSpaceBox').classList.toggle('hidden', !last);
-  $('#startHint').textContent = Dav.cfg() ? '' : '第一步：点右上角 ⚙ 配置坚果云 WebDAV（需要应用密码）';
+  $('#startHint').textContent = (Dav.cfg() && Dav.cfg().user) ? '' : '第一步：进入设置，配置坚果云 WebDAV 或粘贴家人的配置码';
   showScreen('startScreen');
 }
 
 $('#createBtn').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#joinBtn').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
-$('#enterLastBtn').onclick=()=>{ const c=localStorage.getItem('tm:lastSpace'); if(c) enterSpace(c); };
-$('#davBtn').onclick=openDavModal;
+$('#enterLastBtn').onclick=()=>{ const c=localStorage.getItem('tm:lastSpace'); if(c && needDav()) enterSpace(c); };
+$('#davBtn').onclick=openSettings;
 
-/* ---------- 网盘设置 ---------- */
-function openDavModal(){
-  const c = Dav.cfg() || { baseUrl:'https://dav.jianguoyun.com/dav', user:'', pass:'' };
-  $('#davBase').value=c.baseUrl||''; $('#davUser').value=c.user||''; $('#davPass').value=c.pass||'';
-  $('#davModal').hidden=false;
+/* ---------- 设置页 ---------- */
+function fillDavForm(){
+  const c = Dav.cfg() || {};
+  $('#davBase').value=c.baseUrl||'https://dav.jianguoyun.com/dav';
+  $('#davUser').value=c.user||''; $('#davPass').value=c.pass||'';
 }
-$('#davCancel').onclick=()=>{ $('#davModal').hidden=true; };
+function saveDavFromForm(){
+  Dav.saveConfig({ baseUrl:$('#davBase').value.trim(), user:$('#davUser').value.trim(), pass:$('#davPass').value });
+}
+function openSettings(){
+  fillDavForm(); refreshProfile(); renderSpaceMgmt();
+  $('#appVersion').textContent='v'+APP_VERSION;
+  showScreen('settingsScreen');
+}
+$('#settingsBack').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
+['#davBase','#davUser','#davPass'].forEach(s=>$(s).onchange=saveDavFromForm);
+$('#setName').oninput=onNameInput;
 $('#davTest').onclick=async()=>{
   if(!$('#davUser').value.trim()||!$('#davPass').value) return toast('请填写账号和应用密码');
-  Dav.saveConfig({ baseUrl:$('#davBase').value.trim(), user:$('#davUser').value.trim(), pass:$('#davPass').value });
-  try{ await Dav.test(); toast('网盘连接成功 ✔'); $('#davModal').hidden=true; initStart(); }
+  saveDavFromForm();
+  try{ await Dav.test(); toast('网盘连接成功 ✔'); }
   catch(e){ toast(e.message); }
 };
-$('#davSave').onclick=()=>{
-  Dav.saveConfig({ baseUrl:$('#davBase').value.trim(), user:$('#davUser').value.trim(), pass:$('#davPass').value });
-  $('#davModal').hidden=true; toast('已保存（未验证）'); initStart();
+
+/* 配置码 B/C 共存：手动表单 = 方式B；配置码 = 方式C 一步导入 */
+$('#cfgImportBtn').onclick=()=>{ $('#cfgImportText').value=''; $('#cfgImportModal').hidden=false; };
+$('#cfgImportCancel').onclick=()=>{ $('#cfgImportModal').hidden=true; };
+$('#cfgImportSave').onclick=async()=>{
+  try{
+    const r = Dav.importCode($('#cfgImportText').value);
+    $('#cfgImportModal').hidden=true; toast('配置码已导入，正在测试连接…');
+    try{
+      await Dav.test();
+      if(r.spaceCode){ await joinSpace(r.spaceCode); }
+      else { $('#settingsBack').onclick(); }
+    }catch(e){ toast(e.message); }
+  }catch(e){ toast(e.message); }
+};
+$('#cfgExportBtn').onclick=()=>{
+  try{
+    $('#cfgExportText').value = Dav.exportCode(state.code || localStorage.getItem('tm:lastSpace') || '');
+    $('#cfgExportModal').hidden=false;
+  }catch(e){ toast(e.message); }
+};
+$('#cfgExportClose').onclick=()=>{ $('#cfgExportModal').hidden=true; };
+$('#cfgExportCopy').onclick=()=>{
+  const t=$('#cfgExportText');
+  if(navigator.clipboard) navigator.clipboard.writeText(t.value).then(()=>toast('已复制，请仅发给信任的人')).catch(()=>{ t.select(); toast('长按手动复制'); });
+  else { t.select(); toast('长按手动复制'); }
 };
 
 /* ---------- 创建 / 加入空间 ---------- */
@@ -88,8 +143,9 @@ function openSpaceModal(mode){
   state.spaceMode=mode;
   $('#spaceModalTitle').textContent = mode==='create' ? '创建共享空间' : '用邀请码加入';
   $('#spaceNameLabel').classList.toggle('hidden', mode!=='create');
-  $('#spaceCodeLabel').classList.toggle('hidden', mode!=='create');
+  $('#spaceCodeLabel').classList.toggle('hidden', mode!=='join');
   $('#spaceNameInput').value=''; $('#spaceCodeInput').value='';
+  $('#switchModal').hidden=true;
   $('#spaceModal').hidden=false;
 }
 $('#spaceCancel').onclick=()=>{ $('#spaceModal').hidden=true; };
@@ -107,31 +163,67 @@ $('#spaceSave').onclick=async()=>{
     }else{
       const code=$('#spaceCodeInput').value.trim().toUpperCase();
       if(!code) return toast('请输入邀请码');
-      let { data, etag } = await Store.openRemote(code);
-      if(data.members[App.clientId]) { toast('你已在该空间'); }
-      else {
-        Store.joinMember(data);
-        let p = await Dav.put(code, JSON.stringify(data), etag);
-        if(p.status===412){ // 并发加入：重拉合并再写一次
-          const fresh = await Store.openRemote(code);
-          data = mergeJoin(fresh.data); etag = fresh.etag;
-          p = await Dav.put(code, JSON.stringify(data), etag);
-          if(p.status===412) throw new Error('空间正被修改，请稍后重试');
-        }
-      }
-      Store.upsertSpaceMeta(code, data.name||'共享空间');
       $('#spaceModal').hidden=true;
-      await enterSpace(code);
+      await joinSpace(code);
     }
   }catch(e){ toast(e.message); }
   finally{ btn.disabled=false; }
 };
-function mergeJoin(remoteData){
-  const local = Store.get(state.code);
-  const merged = local ? remoteData : JSON.parse(JSON.stringify(remoteData));
-  Store.joinMember(merged);
-  return merged;
+async function joinSpace(code){
+  if(!needDav()) return;
+  let { data, etag } = await Store.openRemote(code);
+  if(data.members[App.clientId]) { toast('你已在该空间'); }
+  else {
+    Store.joinMember(data);
+    let p = await Dav.put(code, JSON.stringify(data), etag);
+    if(p.status===412){ // 并发加入：重拉合并再写一次
+      const fresh = await Store.openRemote(code);
+      Store.joinMember(fresh.data);
+      p = await Dav.put(code, JSON.stringify(fresh.data), fresh.etag);
+      if(p.status===412) throw new Error('空间正被修改，请稍后重试');
+    }
+  }
+  Store.upsertSpaceMeta(code, data.name||'共享空间');
+  await enterSpace(code);
 }
+
+/* ---------- 空间切换 / 管理 ---------- */
+function spaceItems(listEl, onClick){
+  listEl.innerHTML='';
+  const spaces = Store.listSpaces();
+  if(!spaces.length){ listEl.innerHTML='<p class="set-note">还没有空间，点下方按钮创建或加入。</p>'; return; }
+  spaces.forEach(s=>{
+    const data = Store.get(s.code);
+    const st = Store.status(s.code);
+    const item=document.createElement('div');
+    item.className='space-item'+(s.code===state.code?' current':'');
+    item.innerHTML=`<div class="si-main">
+        <div class="si-name">${escapeHtml(s.name||'共享空间')}${s.code===state.code?'<span class="si-now">使用中</span>':''}</div>
+        <div class="si-meta">码 ${s.code} · ${data?Object.keys(data.members).length:0} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}</div>
+      </div>`;
+    if(onClick) item.onclick=()=>onClick(s);
+    else {
+      const enter=document.createElement('button'); enter.className='si-btn'; enter.textContent='进入';
+      enter.onclick=(ev2)=>{ ev2.stopPropagation(); if(needDav()) enterSpace(s.code); };
+      const out=document.createElement('button'); out.className='si-btn danger'; out.textContent='移除';
+      out.onclick=async(ev2)=>{
+        ev2.stopPropagation();
+        if(!await uiConfirm('移除空间',`从本机移除「${s.name||s.code}」？网盘数据不会被删除，重新输入邀请码即可回来。`,'移除')) return;
+        Store.removeSpace(s.code);
+        if(state.code===s.code) initStart(); else renderSpaceMgmt();
+      };
+      item.appendChild(enter); item.appendChild(out);
+    }
+    listEl.appendChild(item);
+  });
+}
+function renderSpaceMgmt(){ spaceItems($('#spaceMgmtList'), null); }
+$('#switchSpaceBtn').onclick=()=>{ spaceItems($('#switchList'), (s)=>{ $('#switchModal').hidden=true; enterSpace(s.code); }); $('#switchModal').hidden=false; };
+$('#swSettings').onclick=()=>{ $('#switchModal').hidden=true; openSettings(); };
+$('#swHome').onclick=()=>{ $('#switchModal').hidden=true; state.code=null; initStart(); };
+$('#swJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
+$('#mgmtCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
+$('#mgmtJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
@@ -160,7 +252,6 @@ function updateSyncChip(){
   if(!s.exists){ el.textContent=''; return; }
   el.textContent = s.syncing? '同步中…' : s.dirty? '待同步（离线可写）' : s.lastSync? '已同步 '+new Date(s.lastSync).toLocaleTimeString() : '';
 }
-$('#backStart').onclick=()=>{ state.code=null; initStart(); };
 $('#copyCode').onclick=()=>{
   const code=$('#codeText').textContent;
   if(navigator.clipboard) navigator.clipboard.writeText(code).then(()=>toast('邀请码已复制：'+code)).catch(()=>toast('邀请码：'+code));
@@ -183,23 +274,22 @@ function renderPeopleTags(){
 }
 
 /* ---------- 月视图（渲染期按 RRULE 展开，数据里只存规则） ---------- */
+const REPEAT_ZH = { DAILY:'每天', WEEKLY:'每周', MONTHLY:'每月', YEARLY:'每年' };
 function renderCalendar(){
   const data=Store.get(state.code); if(!data) return;
   $('#monthTitle').textContent=`${state.year}年${state.month}月`;
   const cal=$('#calendar'); cal.innerHTML='';
   const first=new Date(state.year,state.month-1,1);
   const startWeekday=first.getDay();
-  const daysInMonth=new Date(state.year,state.month,0).getDate();
   const today=new Date();
   const todayStr=dateStr(today.getFullYear(),today.getMonth()+1,today.getDate());
 
-  // 42 格窗口 [winFrom, winTo]
   const winFrom=new Date(first); winFrom.setDate(winFrom.getDate()-startWeekday);
   const winTo=new Date(winFrom); winTo.setDate(winTo.getDate()+41);
   const fromStr=dateStr(winFrom.getFullYear(),winFrom.getMonth()+1,winFrom.getDate());
   const toStr=dateStr(winTo.getFullYear(),winTo.getMonth()+1,winTo.getDate());
 
-  const byDay={}; // ds -> [ {ev} ]
+  const byDay={};
   Object.keys(data.events).forEach(id=>{
     const ev=data.events[id];
     if(!state.visible[ev.ownerId] || !data.members[ev.ownerId]) return;
@@ -227,9 +317,7 @@ function renderCalendar(){
         chip.style.background=color; chip.style.borderLeftColor=shade(color,-25);
         const time=(!e.allDay&&e.start)?`<span class="ev-time">${e.start}</span>`:'';
         chip.innerHTML=`${time}${escapeHtml(e.title)}`;
-        const owner=data.members[e.ownerId].name;
-        chip.title=`${owner} · ${e.title}`+(e.start?` ${e.start}`:'')+(e.location?` @${e.location}`:'')+(e.rrule?' ↻':'');
-        chip.onclick=(ev2)=>{ ev2.stopPropagation(); if(confirm(`删除「${e.title}」(${owner})？`)) Store.deleteEvent(state.code,e.id); };
+        chip.onclick=(ev2)=>{ ev2.stopPropagation(); openDetail(e, data); };
         box.appendChild(chip);
       });
       cell.appendChild(box);
@@ -238,6 +326,36 @@ function renderCalendar(){
     cal.appendChild(cell);
   }
 }
+
+/* ---------- 日程详情 ---------- */
+let detailEvent=null;
+function openDetail(ev, data){
+  detailEvent=ev;
+  const owner=data.members[ev.ownerId]||{name:'未知',color:'#999'};
+  $('#detailDot').style.background=owner.color;
+  $('#detailTitle').textContent=ev.title;
+  const lines=[];
+  lines.push(`成员：${owner.name}${ev.ownerId===App.clientId?'（我）':''}`);
+  lines.push(`日期：${ev.date}${ev.endDate?' → '+ev.endDate:''}`);
+  if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
+  if(ev.allDay) lines.push('全天');
+  if(ev.rrule) lines.push(`重复：${REPEAT_ZH[(ev.rrule.freq||'').toUpperCase()]||ev.rrule.freq}`);
+  if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
+  if(ev.location) lines.push(`地点：${ev.location}`);
+  if(ev.desc) lines.push(`备注：${ev.desc}`);
+  $('#detailMeta').innerHTML=lines.map(l=>`<div class="dm-row">${escapeHtml(l)}</div>`).join('');
+  const mine=ev.ownerId===App.clientId;
+  $('#detailDelete').classList.toggle('hidden', !mine);
+  $('#detailLockNote').classList.toggle('hidden', mine);
+  $('#detailModal').hidden=false;
+}
+$('#detailClose').onclick=()=>{ $('#detailModal').hidden=true; };
+$('#detailDelete').onclick=async()=>{
+  if(!detailEvent) return;
+  if(!await uiConfirm('删除日程',`删除「${detailEvent.title}」？删除会同步给空间内所有成员。`,'删除')) return;
+  if(Store.deleteEvent(state.code, detailEvent.id)){ $('#detailModal').hidden=true; toast('已删除'); }
+  else toast('只有创建者可以删除这条日程');
+};
 
 /* ---------- 新建日程 ---------- */
 function openEventModal(presetDate){
@@ -263,7 +381,7 @@ $('#eventSave').onclick=async()=>{
   $('#eventModal').hidden=true; toast('已保存，稍后自动同步');
 };
 
-/* ---------- 导入 .ics ---------- */
+/* ---------- 系统日历导入 / 回写 ---------- */
 function fillImportOwner(){
   const sel=$('#importOwner'); sel.innerHTML='';
   const data=Store.get(state.code); if(!data) return;
@@ -275,8 +393,6 @@ function fillImportOwner(){
 }
 $('#importBtn').onclick=()=>{ fillImportOwner(); $('#permBtn').hidden=true; $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
-
-/* 直接读取系统日历（原生桥） */
 $('#permBtn').onclick=()=>CalBridge.openSettings();
 $('#sysImportBtn').onclick=async()=>{
   if(!state.code) return;
@@ -291,8 +407,6 @@ $('#sysImportBtn').onclick=async()=>{
     $('#importModal').hidden=true;
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
 };
-
-/* 回写：空间内可见日程 → 系统「共享日程」独立日历 */
 $('#writeBackBtn').onclick=async()=>{
   if(!state.code) return;
   const data=Store.get(state.code); if(!data) return;
@@ -317,6 +431,7 @@ $('#importSave').onclick=async()=>{
 };
 
 /* ---------- 月份导航 & FAB ---------- */
+$('#myName').oninput=onNameInput;
 $('#addBtn').onclick=()=>openEventModal();
 $('#prevBtn').onclick=()=>{ state.month--; if(state.month<1){state.month=12;state.year--;} renderCalendar(); };
 $('#nextBtn').onclick=()=>{ state.month++; if(state.month>12){state.month=1;state.year++;} renderCalendar(); };

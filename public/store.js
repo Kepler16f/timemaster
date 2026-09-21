@@ -160,6 +160,14 @@
     get(code) { return loadLocal(code).data; },
     status(code) { const c = loadLocal(code); return { dirty: c.dirty, syncing: c.syncing, lastSync: c.lastSync, exists: !!c.data }; },
     syncCode, scheduleSync, onChange, mutate,
+    listSpaces() { try { return JSON.parse(localStorage.getItem('tm:spaces') || '[]'); } catch (e) { return []; } },
+    removeSpace(code) {
+      const spaces = api.listSpaces().filter((s) => s.code !== code);
+      localStorage.setItem('tm:spaces', JSON.stringify(spaces));
+      if (localStorage.getItem('tm:lastSpace') === code) localStorage.removeItem('tm:lastSpace');
+      localStorage.removeItem(localKey(code));
+      delete cache[code];
+    },
     addEvent(code, ev) {
       const s = stamp();
       const id = genId('e');
@@ -178,11 +186,15 @@
       });
     },
     deleteEvent(code, id) {
-      mutate(code, (d) => {
-        const ts = Math.max(Date.now(), (d.events[id] ? d.events[id].updatedAt : 0) + 1);
-        d.deletions[id] = ts;
-        delete d.events[id];
+      const d = loadLocal(code).data;
+      if (!d || !d.events[id]) return false;
+      if (d.events[id].ownerId !== App.clientId) return false; // 仅创建者可删自己的日程
+      mutate(code, (dd) => {
+        const ts = Math.max(Date.now(), (dd.events[id] ? dd.events[id].updatedAt : 0) + 1);
+        dd.deletions[id] = ts;
+        delete dd.events[id];
       });
+      return true;
     },
     setProfile(code) {
       mutate(code, (d) => {

@@ -91,5 +91,28 @@
     return null;
   }
 
-  window.Dav = { cfg, saveConfig, get, put, ensureDir, test };
+  /* ---------- 配置码（方式 C）：打包 WebDAV 配置一键分享给家人 ---------- */
+  function b64encode(s) { return btoa(String.fromCharCode(...new TextEncoder().encode(s))); }
+  function b64decode(s) { return new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0))); }
+
+  function exportCode(spaceCode) {
+    const c = cfg();
+    if (!c || !c.baseUrl || !c.user || !c.pass) throw new Error('请先填全网盘配置');
+    const o = { b: c.baseUrl, u: c.user, p: c.pass };
+    if (spaceCode) o.c = spaceCode;
+    return 'TM1:' + b64encode(JSON.stringify(o));
+  }
+
+  /* 返回 { spaceCode } 或抛错；成功后配置已保存 */
+  function importCode(text) {
+    let s = (text || '').trim();
+    if (s.startsWith('TM1:')) s = s.slice(4);
+    let o = null;
+    try { o = JSON.parse(b64decode(s)); } catch (e) { /* fallthrough */ }
+    if (!o || !o.b || !o.u || !o.p) throw new Error('配置码无法识别，请确认完整粘贴');
+    saveConfig({ baseUrl: o.b, user: o.u, pass: o.p });
+    return { spaceCode: o.c || null };
+  }
+
+  window.Dav = { cfg, saveConfig, get, put, ensureDir, test, exportCode, importCode };
 })();

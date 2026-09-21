@@ -5,13 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#f0463a" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-title" content="共享日程" />
+  <meta name="apple-mobile-web-app-title" content="时间管理大师" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="style.css" />
   <title>时间管理大师 · 共享日程</title>
 </head>
 <body>
-  <!-- ============ 直接使用（无登录） ============ -->
+  <!-- ============ 起始屏（免登录） ============ -->
   <section class="screen" id="startScreen">
     <div class="auth-card">
       <div class="brand">
@@ -32,7 +32,7 @@
       </div>
       <p class="auth-hint" id="startHint"></p>
       <p class="how">创建后会得到 8 位邀请码，发给朋友即可一起用。</p>
-      <button class="big-btn ghost" id="davBtn">⚙ 网盘设置（坚果云 WebDAV）</button>
+      <button class="big-btn ghost" id="davBtn">⚙ 设置（网盘 / 配置码 / 资料）</button>
     </div>
   </section>
 
@@ -47,7 +47,7 @@
         <button id="prevBtn" class="nav-btn">‹</button>
         <button id="nextBtn" class="nav-btn">›</button>
         <button id="importBtn" class="icon-btn" title="导入日历">⤓</button>
-        <button id="backStart" class="icon-btn" title="返回">☰</button>
+        <button id="switchSpaceBtn" class="icon-btn" title="切换空间">☰</button>
       </div>
     </header>
 
@@ -68,10 +68,87 @@
     </div>
 
     <div class="calendar" id="calendar"></div>
-    <p class="tip">同格内不同颜色的色块 = 不同成员的日程。点色块可删除，点空格可新建。</p>
+    <p class="tip">同格内不同颜色的色块 = 不同成员的日程。只有创建者可以删除自己的日程。</p>
 
     <button class="fab" id="addBtn">＋</button>
   </section>
+
+  <!-- ============ 设置页 ============ -->
+  <section class="screen hidden" id="settingsScreen">
+    <header class="topbar">
+      <div class="title-group"><h1 style="font-size:20px">设置</h1></div>
+      <div class="nav-group"><button id="settingsBack" class="icon-btn">✕</button></div>
+    </header>
+    <div class="settings-body">
+
+      <div class="set-group">
+        <div class="set-title">个人资料</div>
+        <label class="set-field">昵称
+          <input type="text" id="setName" placeholder="例如 小明" />
+        </label>
+        <div class="set-field">标签颜色
+          <div class="color-picker" id="setColorPicker" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">账户</div>
+        <div class="set-row"><span>✉️ 邮箱验证码登录</span><span class="badge">即将开放</span></div>
+        <p class="set-note">账户上线后身份将跟随账户而非设备：换手机登录同一邮箱，日程标签自动一致。</p>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">网盘同步（方式 B · 各自账号）</div>
+        <label class="set-field">服务器地址
+          <input type="text" id="davBase" placeholder="https://dav.jianguoyun.com/dav" />
+        </label>
+        <label class="set-field">账号（邮箱）
+          <input type="text" id="davUser" placeholder="you@example.com" />
+        </label>
+        <label class="set-field">应用密码
+          <input type="password" id="davPass" placeholder="坚果云：账户信息→安全选项→生成应用密码" />
+        </label>
+        <button class="big-btn ghost" id="davTest">🔌 测试连接</button>
+        <p class="set-note">数据存于网盘 <b>/shared-calendar/邀请码.json</b>，免费版流量足够（每月约 50MB）。若用他人共享文件夹，把地址填到共享文件夹一层。</p>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">配置码（方式 C · 一步分享）</div>
+        <button class="big-btn ghost" id="cfgImportBtn">📥 粘贴配置码导入并进入空间</button>
+        <button class="big-btn ghost" id="cfgExportBtn">📤 生成配置码发给家人</button>
+        <p class="set-note">配置码 = 网盘地址 + 账号 + 应用密码 + 邀请码 打包。⚠️ 含凭据，只发给信任的人。</p>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">空间管理</div>
+        <div id="spaceMgmtList" class="space-list"></div>
+        <div class="set-actions">
+          <button class="big-btn ghost" id="mgmtCreate">＋ 新建空间</button>
+          <button class="big-btn ghost" id="mgmtJoin">🔑 邀请码加入</button>
+        </div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">关于</div>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.0.4</span></div>
+        <p class="set-note">时间管理大师 TimeMaster · 数据经由你自己的网盘同步，无第三方服务器。</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ 切换空间弹层 ============ -->
+  <div class="modal-mask" id="switchModal" hidden>
+    <div class="modal">
+      <h3>切换空间</h3>
+      <div id="switchList" class="space-list"></div>
+      <button class="big-btn ghost" id="swJoin">🔑 用邀请码加入新空间</button>
+      <div class="modal-actions">
+        <button id="swSettings" class="action-btn">⚙ 设置</button>
+        <button id="swHome" class="action-btn">↩ 返回首页</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ============ 创建/加入空间弹窗 ============ -->
   <div class="modal-mask" id="spaceModal" hidden>
@@ -129,51 +206,82 @@
     </div>
   </div>
 
-  <!-- ============ 导入弹窗 ============ -->
-  <div class="modal-mask" id="importModal" hidden>
+  <!-- ============ 日程详情弹层 ============ -->
+  <div class="modal-mask" id="detailModal" hidden>
     <div class="modal">
-      <h3>从系统日历导入 (.ics)</h3>
-      <p class="import-tip">导出时务必选「<b>全部账户</b>」，这样别的 APP 写进系统日历的日程也会一起进来。可一次选多个 .ics 文件。</p>
-      <label>选择 .ics 文件（可多选）
-        <input type="file" id="icsFile" accept=".ics,text/calendar" multiple />
-      </label>
-      <label>归入成员
-        <select id="importOwner"></select>
-      </label>
-      <button class="big-btn ghost" id="sysImportBtn">📥 直接读取系统日历（App 内）</button>
-      <button class="big-btn ghost" id="writeBackBtn">📤 把空间日程回写到系统日历</button>
-      <button class="big-btn ghost warn hidden" id="permBtn">⚠️ 日历权限未开启，点击去系统设置</button>
-      <details class="export-help">
-        <summary>📱 鸿蒙 / 安卓 如何导出「全部账户」日程？</summary>
-        <p><b>鸿蒙（华为）：</b>打开「日历」→ 右上角四个点 / 设置 → 找到「导出」或「备份与恢复」→ 导出为 .ics，选择 <b>全部账户</b>。把文件发到自己微信/邮箱，下载后用本 APP 上传即可。</p>
-        <p><b>安卓（Google 日历 / 厂商日历）：</b>Google 日历在电脑网页版可逐个日历「导出」；手机端多在「设置 → 导出」里勾选所有账户。若日程存在本地或其他 APP 写入的账户，导出时记得全选。</p>
-        <p class="import-tip warn">⚠️ 优先使用上方「直接读取系统日历」；导出 .ics 是在无法授权时的备用全量导入方式。</p>
-      </details>
+      <div class="detail-head"><span class="dot" id="detailDot"></span><h3 id="detailTitle"></h3></div>
+      <div id="detailMeta" class="detail-meta"></div>
+      <p id="detailLockNote" class="set-note hidden">该日程由他人创建，仅创建者可删除。</p>
       <div class="modal-actions">
-        <button id="importCancel" class="action-btn">取消</button>
-        <button id="importSave" class="action-btn primary">导入</button>
+        <button id="detailClose" class="action-btn">关闭</button>
+        <button id="detailDelete" class="action-btn danger">删除</button>
       </div>
     </div>
   </div>
 
-  <!-- ============ 网盘设置弹窗 ============ -->
-  <div class="modal-mask" id="davModal" hidden>
-    <div class="modal">
-      <h3>网盘设置（WebDAV）</h3>
-      <label>服务器地址
-        <input type="text" id="davBase" placeholder="https://dav.jianguoyun.com/dav" />
-      </label>
-      <label>账号（邮箱）
-        <input type="text" id="davUser" placeholder="you@example.com" />
-      </label>
-      <label>应用密码
-        <input type="password" id="davPass" placeholder="坚果云：账户信息→安全选项→生成应用密码" />
-      </label>
-      <p class="import-tip">数据存于网盘 <b>/shared-calendar/邀请码.json</b>，免费版流量足够（每月约 50MB）。</p>
+  <!-- ============ 通用确认弹层 ============ -->
+  <div class="modal-mask" id="confirmModal" hidden>
+    <div class="modal confirm-sheet">
+      <h3 id="confirmTitle"></h3>
+      <p id="confirmText" class="confirm-text"></p>
       <div class="modal-actions">
-        <button id="davCancel" class="action-btn">取消</button>
-        <button id="davTest" class="action-btn">测试连接</button>
-        <button id="davSave" class="action-btn primary">仅保存</button>
+        <button id="confirmNo" class="action-btn">取消</button>
+        <button id="confirmYes" class="action-btn primary danger-solid">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 导入配置码 ============ -->
+  <div class="modal-mask" id="cfgImportModal" hidden>
+    <div class="modal">
+      <h3>导入配置码</h3>
+      <label>粘贴家人分享的配置码
+        <textarea id="cfgImportText" rows="4" placeholder="TM1:...."></textarea>
+      </label>
+      <div class="modal-actions">
+        <button id="cfgImportCancel" class="action-btn">取消</button>
+        <button id="cfgImportSave" class="action-btn primary">导入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 生成配置码 ============ -->
+  <div class="modal-mask" id="cfgExportModal" hidden>
+    <div class="modal">
+      <h3>配置码</h3>
+      <label>发给家人，对方在「导入配置码」粘贴即可
+        <textarea id="cfgExportText" rows="4" readonly></textarea>
+      </label>
+      <p class="import-tip warn">⚠️ 内含网盘应用密码，仅发给信任的人；泄露后可在坚果云重置应用密码。</p>
+      <div class="modal-actions">
+        <button id="cfgExportClose" class="action-btn">关闭</button>
+        <button id="cfgExportCopy" class="action-btn primary">复制</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 导入弹窗 ============ -->
+  <div class="modal-mask" id="importModal" hidden>
+    <div class="modal">
+      <h3>系统日历导入 / 回写</h3>
+      <button class="big-btn ghost" id="sysImportBtn">📥 直接读取系统日历并导入</button>
+      <button class="big-btn ghost" id="writeBackBtn">📤 把空间日程回写到系统日历</button>
+      <button class="big-btn ghost warn hidden" id="permBtn">⚠️ 日历权限未开启，点击去系统设置</button>
+      <details class="export-help">
+        <summary>📁 备用：从 .ics 文件导入</summary>
+        <p class="import-tip">日历 App 导出 .ics（选「全部账户」），发到自己微信/邮箱，下载后在这里上传。</p>
+        <label style="margin-top:8px">选择 .ics 文件（可多选）
+          <input type="file" id="icsFile" accept=".ics,text/calendar" multiple />
+        </label>
+        <div class="modal-actions">
+          <button id="importSave" class="action-btn primary">导入文件</button>
+        </div>
+      </details>
+      <label style="margin-top:2px">归入成员
+        <select id="importOwner"></select>
+      </label>
+      <div class="modal-actions">
+        <button id="importCancel" class="action-btn">关闭</button>
       </div>
     </div>
   </div>

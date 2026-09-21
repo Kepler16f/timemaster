@@ -33,10 +33,11 @@ jobs:
         working-directory: android-shell
         run: chmod +x gradlew && ./gradlew assembleDebug --no-daemon
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: timemaster-debug-apk
+          name: app-debug.apk
           path: android-shell/app/build/outputs/apk/debug/app-debug.apk
+          archive: false
 
   release-apk:
     name: Build signed release APK (tag v*)
@@ -64,7 +65,8 @@ jobs:
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: chmod +x gradlew && ./gradlew assembleRelease --no-daemon
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
-          name: timemaster-release-apk
+          name: app-release.apk
           path: android-shell/app/build/outputs/apk/release/app-release.apk
+          archive: false
