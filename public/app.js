@@ -114,21 +114,14 @@ $('#davTest').onclick=async()=>{
   catch(e){ toast(e.message); }
 };
 
-/* ---------- 账户（邮箱验证码） ---------- */
+/* ---------- 账户（登录即用，Supabase 配置已内置） ---------- */
 function renderAccountSection(){
-  const c = Auth.cfg() || {};
-  if(!$('#supaUrl').value) $('#supaUrl').value = c.url||'';
-  if(!$('#supaKey').value) $('#supaKey').value = c.anon||'';
   const s = Auth.session();
   $('#acctLoggedOut').classList.toggle('hidden', !!s);
   $('#acctLoggedIn').classList.toggle('hidden', !s);
   if(s) $('#acctEmail').textContent = s.email||'已登录';
   else { $('#otpCodeWrap').classList.add('hidden'); $('#otpVerifyBtn').classList.add('hidden'); $('#otpCode').value=''; }
 }
-$('#supaUrl').onchange=$('#supaKey').onchange=()=>{
-  Auth.setSupabase($('#supaUrl').value, $('#supaKey').value);
-  toast('Supabase 配置已保存');
-};
 $('#otpSendBtn').onclick=async()=>{
   const email=$('#loginEmail').value.trim();
   const btn=$('#otpSendBtn'); btn.disabled=true;

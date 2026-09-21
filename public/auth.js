@@ -5,7 +5,16 @@
   const SUPA_KEY = 'tm:auth:supa';
   const SESSION_KEY = 'tm:auth:session';
 
-  function cfg() { try { return JSON.parse(localStorage.getItem(SUPA_KEY)) || null; } catch (e) { return null; } }
+  /* 开发者一次性内置（发布前替换为真实项目值）；终端用户零配置 */
+  const DEFAULT_SUPA = { url: '', anon: '' };
+
+  function cfg() {
+    try {
+      const c = JSON.parse(localStorage.getItem(SUPA_KEY));
+      if (c && c.url && c.anon) return c;
+    } catch (e) { /* noop */ }
+    return DEFAULT_SUPA;
+  }
   function setSupabase(url, anon) {
     if (!/^https?:\/\//i.test(url || '')) url = 'https://' + url;
     localStorage.setItem(SUPA_KEY, JSON.stringify({ url: (url || '').trim().replace(/\/+$/, ''), anon: (anon || '').trim() }));
@@ -17,7 +26,7 @@
   function ready() { const c = cfg(); return !!(c && c.url && c.anon); }
 
   async function req(path, body, token) {
-    if (!ready()) throw new Error('请先填写 Supabase 地址与 anon key');
+    if (!ready()) throw new Error('登录服务暂未开放，可直接使用本机身份');
     const c = cfg();
     const headers = { 'Content-Type': 'application/json', apikey: c.anon };
     if (token) headers.Authorization = 'Bearer ' + token;

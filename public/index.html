@@ -92,7 +92,7 @@
       </div>
 
       <div class="set-group">
-        <div class="set-title">账户（邮箱验证码）</div>
+        <div class="set-title">账户</div>
         <div id="acctLoggedOut">
           <label class="set-field">邮箱
             <input type="email" id="loginEmail" placeholder="you@example.com" />
@@ -106,16 +106,6 @@
           <div class="set-actions">
             <button class="big-btn hidden" id="otpVerifyBtn">✔ 验证并登录</button>
           </div>
-          <details class="export-help">
-            <summary>🔧 首次使用：绑定 Supabase 项目</summary>
-            <label style="margin-top:8px">Project URL
-              <input type="text" id="supaUrl" placeholder="https://xxxx.supabase.co" />
-            </label>
-            <label style="margin-top:8px">anon key
-              <input type="password" id="supaKey" placeholder="eyJhbGciOi…" />
-            </label>
-            <p class="import-tip">免费步骤：supabase.com 注册 → New project → 左侧 Authentication → Sign In / Providers → Email 勾选 <b>One-time tokens</b>；Project Settings → API 里复制 URL 和 anon key 填到上面。</p>
-          </details>
         </div>
         <div id="acctLoggedIn" class="hidden">
           <div class="set-row"><span>✉️ 已登录</span><span class="set-val" id="acctEmail"></span></div>
