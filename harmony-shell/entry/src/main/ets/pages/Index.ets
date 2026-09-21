@@ -15,7 +15,6 @@ struct Index {
         .javaScriptAccess(true)
         .fileAccess(false)
         .zoomAccess(false)
-        .mixedContentMode(MixedContentMode.None)
         .onControllerAttached(() => {
           HarmonyNative.i().bindWeb(this.controller);
           this.controller.setJavaScriptProxy(
