@@ -6,6 +6,8 @@
   const cache = {}; // code -> { data, etag, dirty, syncing }
 
   function localKey(code) { return 'tm:space:' + code; }
+  /* 身份键：登录账户后跨设备一致，未登录回退设备 id */
+  function myId() { return (window.Auth && Auth.memberKey()) || App.clientId; }
 
   function stamp() {
     return { t: Date.now(), by: App.clientId };
@@ -121,10 +123,10 @@
   }
 
   function createSpace(code, name) {
-    const me = { clientId: App.clientId, name: App.me.name, color: App.me.color };
+    const id = myId();
     return {
       v: 2, code, name,
-      members: { [me.clientId]: { name: me.name, color: me.color, joinedAt: Date.now(), updatedAt: Date.now(), by: me.clientId } },
+      members: { [id]: { name: App.me.name, color: App.me.color, joinedAt: Date.now(), updatedAt: Date.now(), by: id } },
       events: {}, deletions: {},
     };
   }
@@ -136,8 +138,8 @@
   }
 
   function joinMember(data) {
-    data.members[App.clientId] = {
-      name: App.me.name, color: App.me.color, joinedAt: Date.now(), updatedAt: Date.now(), by: App.clientId,
+    data.members[myId()] = {
+      name: App.me.name, color: App.me.color, joinedAt: Date.now(), updatedAt: Date.now(), by: myId(),
     };
   }
 
@@ -171,7 +173,7 @@
     addEvent(code, ev) {
       const s = stamp();
       const id = genId('e');
-      mutate(code, (d) => { d.events[id] = Object.assign({ id, ownerId: App.clientId, type: 'normal' }, ev, { updatedAt: s.t, by: s.by }); });
+      mutate(code, (d) => { d.events[id] = Object.assign({ id, ownerId: myId(), type: 'normal' }, ev, { updatedAt: s.t, by: s.by }); });
       return id;
     },
     addEvents(code, evs, ownerId) {
@@ -181,14 +183,14 @@
         evs.forEach((ev) => {
           if (ev.sourceUid && known.has(ev.sourceUid + '|' + ev.date + '|' + ev.title)) return;
           const id = genId('e');
-          d.events[id] = Object.assign({ id, ownerId: ownerId || App.clientId, type: 'normal' }, ev, { updatedAt: s.t, by: s.by });
+          d.events[id] = Object.assign({ id, ownerId: ownerId || myId(), type: 'normal' }, ev, { updatedAt: s.t, by: s.by });
         });
       });
     },
     deleteEvent(code, id) {
       const d = loadLocal(code).data;
       if (!d || !d.events[id]) return false;
-      if (d.events[id].ownerId !== App.clientId) return false; // 仅创建者可删自己的日程
+      if (d.events[id].ownerId !== myId()) return false; // 仅创建者可删自己的日程
       mutate(code, (dd) => {
         const ts = Math.max(Date.now(), (dd.events[id] ? dd.events[id].updatedAt : 0) + 1);
         dd.deletions[id] = ts;
@@ -197,9 +199,10 @@
       return true;
     },
     setProfile(code) {
+      const id = myId();
       mutate(code, (d) => {
-        d.members[App.clientId] = Object.assign(d.members[App.clientId] || {}, {
-          name: App.me.name, color: App.me.color, updatedAt: Date.now(), by: App.clientId,
+        d.members[id] = Object.assign(d.members[id] || {}, {
+          name: App.me.name, color: App.me.color, updatedAt: Date.now(), by: id,
         });
       });
     },

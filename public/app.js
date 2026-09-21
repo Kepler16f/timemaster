@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.0.5';
+const APP_VERSION = '0.0.6';
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
@@ -17,6 +17,9 @@ window.App = {
     color: localStorage.getItem('tm:myColor') || PALETTE[Math.floor(Math.random() * PALETTE.length)],
   },
 };
+
+/* 当前身份键：已登录=账户（跨设备一致），未登录=本机设备 */
+function myId(){ return (window.Auth && Auth.memberKey()) || App.clientId; }
 
 const state = {
   code: null,
@@ -97,7 +100,7 @@ function saveDavFromForm(){
   Dav.saveConfig({ baseUrl:$('#davBase').value.trim(), user:$('#davUser').value.trim(), pass:$('#davPass').value });
 }
 function openSettings(){
-  fillDavForm(); refreshProfile(); renderSpaceMgmt();
+  fillDavForm(); refreshProfile(); renderSpaceMgmt(); renderAccountSection();
   $('#appVersion').textContent='v'+APP_VERSION;
   showScreen('settingsScreen');
 }
@@ -109,6 +112,47 @@ $('#davTest').onclick=async()=>{
   saveDavFromForm();
   try{ await Dav.test(); toast('网盘连接成功 ✔'); }
   catch(e){ toast(e.message); }
+};
+
+/* ---------- 账户（邮箱验证码） ---------- */
+function renderAccountSection(){
+  const c = Auth.cfg() || {};
+  if(!$('#supaUrl').value) $('#supaUrl').value = c.url||'';
+  if(!$('#supaKey').value) $('#supaKey').value = c.anon||'';
+  const s = Auth.session();
+  $('#acctLoggedOut').classList.toggle('hidden', !!s);
+  $('#acctLoggedIn').classList.toggle('hidden', !s);
+  if(s) $('#acctEmail').textContent = s.email||'已登录';
+  else { $('#otpCodeWrap').classList.add('hidden'); $('#otpVerifyBtn').classList.add('hidden'); $('#otpCode').value=''; }
+}
+$('#supaUrl').onchange=$('#supaKey').onchange=()=>{
+  Auth.setSupabase($('#supaUrl').value, $('#supaKey').value);
+  toast('Supabase 配置已保存');
+};
+$('#otpSendBtn').onclick=async()=>{
+  const email=$('#loginEmail').value.trim();
+  const btn=$('#otpSendBtn'); btn.disabled=true;
+  try{
+    await Auth.sendOtp(email);
+    $('#otpCodeWrap').classList.remove('hidden'); $('#otpVerifyBtn').classList.remove('hidden');
+    $('#otpCode').focus();
+    toast('验证码已发到邮箱，6 位数字');
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; }
+};
+$('#otpVerifyBtn').onclick=async()=>{
+  const btn=$('#otpVerifyBtn'); btn.disabled=true;
+  try{
+    const s = await Auth.verifyOtp($('#loginEmail').value, $('#otpCode').value);
+    renderAccountSection();
+    toast('登录成功，之后的操作以账户身份同步');
+    if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; }
+};
+$('#logoutBtn').onclick=()=>{
+  Auth.clear(); renderAccountSection(); toast('已退出，回到本机身份');
+  if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
 };
 
 /* 配置码 B/C 共存：手动表单 = 方式B；配置码 = 方式C 一步导入 */
@@ -172,7 +216,7 @@ $('#spaceSave').onclick=async()=>{
 async function joinSpace(code){
   if(!needDav()) return;
   let { data, etag } = await Store.openRemote(code);
-  if(data.members[App.clientId]) { toast('你已在该空间'); }
+  if(data.members[myId()]) { toast('你已在该空间'); }
   else {
     Store.joinMember(data);
     let p = await Dav.put(code, JSON.stringify(data), etag);
@@ -231,7 +275,7 @@ async function enterSpace(code){
   const data = Store.get(code) || (await Store.openRemote(code)).data;
   await Store.attach(code, data);
   Object.keys(data.members).forEach(id=>{ if(!(id in state.visible)) state.visible[id]=true; });
-  state.visible[App.clientId]=true;
+  state.visible[myId()]=true;
   $('#spaceName').textContent=data.name||'共享日程';
   $('#codeText').textContent=code;
   renderPeopleTags(); renderCalendar(); updateSyncChip();
@@ -267,7 +311,7 @@ function renderPeopleTags(){
     const tag=document.createElement('span');
     tag.className='person-tag'+(state.visible[id]?'':' off');
     tag.style.borderColor=m.color; tag.style.background=state.visible[id]?m.color+'22':'transparent';
-    tag.innerHTML=`<span class="dot" style="background:${m.color}"></span>${escapeHtml(m.name)}${id===App.clientId?'（我）':''}`;
+    tag.innerHTML=`<span class="dot" style="background:${m.color}"></span>${escapeHtml(m.name)}${id===myId()?'（我）':''}`;
     tag.onclick=()=>{ state.visible[id]=!state.visible[id]; renderPeopleTags(); renderCalendar(); };
     wrap.appendChild(tag);
   });
@@ -335,7 +379,7 @@ function openDetail(ev, data){
   $('#detailDot').style.background=owner.color;
   $('#detailTitle').textContent=ev.title;
   const lines=[];
-  lines.push(`成员：${owner.name}${ev.ownerId===App.clientId?'（我）':''}`);
+  lines.push(`成员：${owner.name}${ev.ownerId===myId()?'（我）':''}`);
   lines.push(`日期：${ev.date}${ev.endDate?' → '+ev.endDate:''}`);
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
   if(ev.allDay) lines.push('全天');
@@ -344,7 +388,7 @@ function openDetail(ev, data){
   if(ev.location) lines.push(`地点：${ev.location}`);
   if(ev.desc) lines.push(`备注：${ev.desc}`);
   $('#detailMeta').innerHTML=lines.map(l=>`<div class="dm-row">${escapeHtml(l)}</div>`).join('');
-  const mine=ev.ownerId===App.clientId;
+  const mine=ev.ownerId===myId();
   $('#detailDelete').classList.toggle('hidden', !mine);
   $('#detailLockNote').classList.toggle('hidden', mine);
   $('#detailModal').hidden=false;
@@ -387,9 +431,9 @@ function fillImportOwner(){
   const data=Store.get(state.code); if(!data) return;
   Object.keys(data.members).forEach(id=>{
     const o=document.createElement('option'); o.value=id;
-    o.textContent=data.members[id].name+(id===App.clientId?'（我）':''); sel.appendChild(o);
+    o.textContent=data.members[id].name+(id===myId()?'（我）':''); sel.appendChild(o);
   });
-  sel.value=App.clientId;
+  sel.value=myId();
 }
 $('#importBtn').onclick=()=>{ fillImportOwner(); $('#permBtn').hidden=true; $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
@@ -402,7 +446,7 @@ $('#sysImportBtn').onclick=async()=>{
     const now=Date.now(), YEAR=365*86400000;
     const list=await CalBridge.fetchEvents(now-YEAR, now+YEAR);
     if(!list.length) return toast('系统日历中近一年没有日程');
-    Store.addEvents(state.code, list, $('#importOwner').value||App.clientId);
+    Store.addEvents(state.code, list, $('#importOwner').value||myId());
     toast(`已导入 ${list.length} 条系统日程`);
     $('#importModal').hidden=true;
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
@@ -439,3 +483,4 @@ $('#todayBtn').onclick=()=>{ const t=new Date(); state.year=t.getFullYear(); sta
 
 /* ---------- 启动 ---------- */
 initStart();
+if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话

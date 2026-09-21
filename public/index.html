@@ -92,9 +92,38 @@
       </div>
 
       <div class="set-group">
-        <div class="set-title">账户</div>
-        <div class="set-row"><span>✉️ 邮箱验证码登录</span><span class="badge">即将开放</span></div>
-        <p class="set-note">账户上线后身份将跟随账户而非设备：换手机登录同一邮箱，日程标签自动一致。</p>
+        <div class="set-title">账户（邮箱验证码）</div>
+        <div id="acctLoggedOut">
+          <label class="set-field">邮箱
+            <input type="email" id="loginEmail" placeholder="you@example.com" />
+          </label>
+          <div class="set-actions">
+            <button class="big-btn ghost" id="otpSendBtn">📧 发送验证码</button>
+          </div>
+          <label class="set-field hidden" id="otpCodeWrap">6 位验证码
+            <input type="text" id="otpCode" inputmode="numeric" maxlength="6" placeholder="邮箱里的 6 位数字" />
+          </label>
+          <div class="set-actions">
+            <button class="big-btn hidden" id="otpVerifyBtn">✔ 验证并登录</button>
+          </div>
+          <details class="export-help">
+            <summary>🔧 首次使用：绑定 Supabase 项目</summary>
+            <label style="margin-top:8px">Project URL
+              <input type="text" id="supaUrl" placeholder="https://xxxx.supabase.co" />
+            </label>
+            <label style="margin-top:8px">anon key
+              <input type="password" id="supaKey" placeholder="eyJhbGciOi…" />
+            </label>
+            <p class="import-tip">免费步骤：supabase.com 注册 → New project → 左侧 Authentication → Sign In / Providers → Email 勾选 <b>One-time tokens</b>；Project Settings → API 里复制 URL 和 anon key 填到上面。</p>
+          </details>
+        </div>
+        <div id="acctLoggedIn" class="hidden">
+          <div class="set-row"><span>✉️ 已登录</span><span class="set-val" id="acctEmail"></span></div>
+          <div class="set-actions">
+            <button class="big-btn ghost" id="logoutBtn">退出登录</button>
+          </div>
+        </div>
+        <p class="set-note">登录后日程身份跟随账户：换手机登录同一邮箱，标签自动一致。不登录也完全可用（按本机身份）。</p>
       </div>
 
       <div class="set-group">
@@ -291,6 +320,7 @@
   <script src="ics.js"></script>
   <script src="dav.js"></script>
   <script src="store.js"></script>
+  <script src="auth.js"></script>
   <script src="calbridge.js"></script>
   <script src="app.js"></script>
 </body>
