@@ -275,6 +275,36 @@ function fillImportOwner(){
 }
 $('#importBtn').onclick=()=>{ fillImportOwner(); $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
+
+/* 直接读取系统日历（原生桥） */
+$('#sysImportBtn').onclick=async()=>{
+  if(!state.code) return;
+  try{
+    await CalBridge.ensurePermission();
+    toast('正在读取系统日历…');
+    const now=Date.now(), YEAR=365*86400000;
+    const list=await CalBridge.fetchEvents(now-YEAR, now+YEAR);
+    if(!list.length) return toast('系统日历中近一年没有日程');
+    Store.addEvents(state.code, list, $('#importOwner').value||App.clientId);
+    toast(`已导入 ${list.length} 条系统日程`);
+    $('#importModal').hidden=true;
+  }catch(e){ toast(e.message); }
+};
+
+/* 回写：空间内可见日程 → 系统「共享日程」独立日历 */
+$('#writeBackBtn').onclick=async()=>{
+  if(!state.code) return;
+  const data=Store.get(state.code); if(!data) return;
+  const list=Object.keys(data.events).map(k=>data.events[k])
+    .filter(e=>state.visible[e.ownerId] && e.type!=='work' && e.type!=='rest');
+  if(!list.length) return toast('没有可回写的日程');
+  try{
+    await CalBridge.ensurePermission();
+    const r=await CalBridge.writeBack(list);
+    toast(`已回写系统日历：更新 ${r.upserted} 条，清理 ${r.removed} 条`);
+    $('#importModal').hidden=true;
+  }catch(e){ toast(e.message); }
+};
 $('#importSave').onclick=async()=>{
   const f=$('#icsFile'); if(!f.files.length) return toast('请选择 .ics 文件');
   let text='';

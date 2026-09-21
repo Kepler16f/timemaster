@@ -140,5 +140,15 @@
   }
   function daysInMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); }
 
-  window.IcsParser = { parseICS, expandOccurrences, dstr, parseDate };
+  window.IcsParser = { parseICS, parseRRule, rruleToString, expandOccurrences, dstr, parseDate };
+
+  function rruleToString(r) {
+    if (!r) return '';
+    let s = 'FREQ=' + r.freq + ';INTERVAL=' + (r.interval || 1);
+    if (r.byDay && r.byDay.length) s += ';BYDAY=' + r.byDay.join(',');
+    if (r.byMonthDay && r.byMonthDay.length) s += ';BYMONTHDAY=' + r.byMonthDay.join(',');
+    if (r.count) s += ';COUNT=' + r.count;
+    if (r.until) s += ';UNTIL=' + IcsParser.dstr(r.until) + 'T235959';
+    return s;
+  }
 })();

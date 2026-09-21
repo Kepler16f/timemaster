@@ -12,3 +12,4 @@ harmony-shell/build/
 harmony-shell/.hvigor/
 harmony-shell/.idea/
 *.tsbuildinfo
+.ci-dl/

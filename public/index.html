@@ -140,6 +140,8 @@
       <label>归入成员
         <select id="importOwner"></select>
       </label>
+      <button class="big-btn ghost" id="sysImportBtn">📥 直接读取系统日历（App 内）</button>
+      <button class="big-btn ghost" id="writeBackBtn">📤 把空间日程回写到系统日历</button>
       <details class="export-help">
         <summary>📱 鸿蒙 / 安卓 如何导出「全部账户」日程？</summary>
         <p><b>鸿蒙（华为）：</b>打开「日历」→ 右上角四个点 / 设置 → 找到「导出」或「备份与恢复」→ 导出为 .ics，选择 <b>全部账户</b>。把文件发到自己微信/邮箱，下载后用本 APP 上传即可。</p>
@@ -180,6 +182,7 @@
   <script src="ics.js"></script>
   <script src="dav.js"></script>
   <script src="store.js"></script>
+  <script src="calbridge.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
