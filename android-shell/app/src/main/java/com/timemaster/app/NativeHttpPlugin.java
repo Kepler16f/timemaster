@@ -9,6 +9,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -43,14 +44,18 @@ public class NativeHttpPlugin extends Plugin {
         RequestBody body = null;
         if (bodyStr != null && !method.equals("GET") && !method.equals("HEAD")) {
             String ct = "application/octet-stream";
-            for (String k : headers.keySet()) {
+            for (Iterator<String> it = headers.keys(); it.hasNext(); ) {
+                String k = it.next();
                 if (k.equalsIgnoreCase("Content-Type")) { ct = headers.getString(k); break; }
             }
             body = RequestBody.create(MediaType.parse(ct), bodyStr);
         }
 
         Request.Builder rb = new Request.Builder().url(url).method(method, body);
-        for (String k : headers.keySet()) rb.addHeader(k, headers.getString(k));
+        for (Iterator<String> it = headers.keys(); it.hasNext(); ) {
+            String k = it.next();
+            rb.addHeader(k, headers.getString(k));
+        }
 
         client.newCall(rb.build()).enqueue(new Callback() {
             @Override
