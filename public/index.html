@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="共享日程" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="stylesheet" href="style.css" />
-  <title>共享日程 · 多人 ETA</title>
+  <title>时间管理大师 · 共享日程</title>
 </head>
 <body>
   <!-- ============ 直接使用（无登录） ============ -->
@@ -16,8 +16,8 @@
     <div class="auth-card">
       <div class="brand">
         <div class="brand-logo">📅</div>
-        <h1>共享日程</h1>
-        <p>多人共享 · 打开即用，无需注册</p>
+        <h1>时间管理大师</h1>
+        <p>多人共享 · 坚果云同步，无需注册</p>
       </div>
       <label>我的昵称
         <input type="text" id="myName" placeholder="例如 小明" />
@@ -31,7 +31,8 @@
         <button class="big-btn ghost" id="enterLastBtn">↩ 进入上次的空间</button>
       </div>
       <p class="auth-hint" id="startHint"></p>
-      <p class="how">创建后会得到 6 位邀请码，发给朋友即可一起用。</p>
+      <p class="how">创建后会得到 8 位邀请码，发给朋友即可一起用。</p>
+      <button class="big-btn ghost" id="davBtn">⚙ 网盘设置（坚果云 WebDAV）</button>
     </div>
   </section>
 
@@ -52,7 +53,8 @@
 
     <div class="space-chip" id="spaceChip">
       <span id="spaceName">空间</span>
-      <button id="copyCode" class="code-btn">邀请码 <b id="codeText">------</b> 复制</button>
+      <button id="copyCode" class="code-btn">邀请码 <b id="codeText">--------</b> 复制</button>
+      <span id="syncState" class="sync-state"></span>
     </div>
 
     <div class="people-bar" id="peopleBar">
@@ -79,7 +81,7 @@
         <input type="text" id="spaceNameInput" placeholder="例如：宿舍三人组" />
       </label>
       <label id="spaceCodeLabel" class="hidden">邀请码
-        <input type="text" id="spaceCodeInput" placeholder="6 位邀请码" style="text-transform:uppercase" />
+        <input type="text" id="spaceCodeInput" placeholder="8 位邀请码" style="text-transform:uppercase" />
       </label>
       <div class="modal-actions">
         <button id="spaceCancel" class="action-btn">取消</button>
@@ -108,6 +110,15 @@
           <option value="normal">普通日程</option>
           <option value="work">班（调休上班）</option>
           <option value="rest">休（放假）</option>
+        </select>
+      </label>
+      <label>重复
+        <select id="evRepeat">
+          <option value="none">不重复</option>
+          <option value="daily">每天</option>
+          <option value="weekly">每周</option>
+          <option value="monthly">每月</option>
+          <option value="yearly">每年</option>
         </select>
       </label>
       <label>备注<input type="text" id="evDesc" placeholder="可选" /></label>
@@ -142,8 +153,33 @@
     </div>
   </div>
 
+  <!-- ============ 网盘设置弹窗 ============ -->
+  <div class="modal-mask" id="davModal" hidden>
+    <div class="modal">
+      <h3>网盘设置（WebDAV）</h3>
+      <label>服务器地址
+        <input type="text" id="davBase" placeholder="https://dav.jianguoyun.com/dav" />
+      </label>
+      <label>账号（邮箱）
+        <input type="text" id="davUser" placeholder="you@example.com" />
+      </label>
+      <label>应用密码
+        <input type="password" id="davPass" placeholder="坚果云：账户信息→安全选项→生成应用密码" />
+      </label>
+      <p class="import-tip">数据存于网盘 <b>/shared-calendar/邀请码.json</b>，免费版流量足够（每月约 50MB）。</p>
+      <div class="modal-actions">
+        <button id="davCancel" class="action-btn">取消</button>
+        <button id="davTest" class="action-btn">测试连接</button>
+        <button id="davSave" class="action-btn primary">仅保存</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
   <script src="transport.js"></script>
+  <script src="ics.js"></script>
+  <script src="dav.js"></script>
+  <script src="store.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
