@@ -11,6 +11,7 @@ win.localStorage = (() => {
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
 })();
 win.document = { addEventListener() {}, visibilityState: 'visible', hidden: false };
+win.setTimeout = setTimeout; win.clearTimeout = clearTimeout;
 vm.createContext(win);
 
 function load(file) {
@@ -91,6 +92,26 @@ store.attach('C1', local);
   eq('merge: updatedAt', d.events.e1.updatedAt, 300);
   eq('merge: 墓碑删除生效', !!d.events.e2, false);
   eq('merge: 双方独有事件保留', !!d.events.e3, true);
+
+  /* ---------- 4. 空间改名：name 按 nameUpdatedAt LWW + 仅创建者可改 ---------- */
+  const rnLocal = { v: 2, code: 'C2', name: '本地新名', nameUpdatedAt: 500, createdBy: 'a', members: {}, events: {}, deletions: {} };
+  const rnRemote = { v: 2, code: 'C2', name: '远端旧名', nameUpdatedAt: 100, createdBy: 'a', members: {}, events: {}, deletions: {} };
+  await store.attach('C2', rnRemote);
+  await store.attach('C2', rnLocal);
+  eq('rename: 时间戳新的一方胜出', store.get('C2').name, '本地新名');
+  eq('rename: createdBy 保留', store.get('C2').createdBy, 'a');
+
+  const space3 = store.createSpace('C3', '初创名');
+  await store.attach('C3', space3);
+  eq('rename: createSpace 记录创建者', space3.createdBy, 'zDevice');
+  eq('rename: 创建者 canRename', store.canRename('C3'), true);
+  eq('rename: 创建者改名成功', store.renameSpace('C3', '改名成功'), true);
+  win.Auth = { memberKey: () => 'otherDevice' };
+  eq('rename: 非创建者 canRename', store.canRename('C3'), false);
+  eq('rename: 非创建者改名被拒', store.renameSpace('C3', '非法改名'), false);
+  eq('rename: 旧空间无 createdBy 时取最早成员', store.canRename('C1'), false); // C1 members a(joinedAt1) b(joinedAt2)，我是 otherDevice
+  delete win.Auth;
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

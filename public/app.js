@@ -23,6 +23,7 @@ function myId(){ return (window.Auth && Auth.memberKey()) || App.clientId; }
 
 const state = {
   code: null,
+  prevCode: null,
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
   visible: {},
@@ -69,7 +70,12 @@ function uiConfirm(title, text, yesText){
 function showScreen(name){
   ['startScreen','calendarScreen','settingsScreen'].forEach(s=>$('#'+s).classList.add('hidden'));
   $('#'+name).classList.remove('hidden');
+  $('#tabbar').classList.toggle('hidden', name==='startScreen');
+  $('#tabRoom').classList.toggle('active', name==='calendarScreen');
+  $('#tabSettings').classList.toggle('active', name==='settingsScreen');
 }
+$('#tabRoom').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
+$('#tabSettings').onclick=openSettings;
 
 /* ---------- 资料（起始屏与设置页共用一份状态，双向刷新） ---------- */
 function buildColorPicker(box){
@@ -272,16 +278,45 @@ function spaceItems(listEl, onClick){
     listEl.appendChild(item);
   });
 }
-function renderSpaceMgmt(){ spaceItems($('#spaceMgmtList'), null); }
+function renderSpaceMgmt(){
+  spaceItems($('#spaceMgmtList'), null);
+  const data = state.code ? Store.get(state.code) : null;
+  $('#curSpaceName').textContent = data ? (data.name||'共享日程') : '未进入空间';
+  const can = !!state.code && Store.canRename(state.code);
+  $('#renameBtn').classList.toggle('hidden', !can);
+  $('#renameLockNote').classList.toggle('hidden', !(state.code && !can));
+}
+$('#renameBtn').onclick=()=>{
+  const data=Store.get(state.code); if(!data) return;
+  $('#renameInput').value=data.name||'';
+  $('#renameModal').hidden=false;
+};
+$('#renameCancel').onclick=()=>{ $('#renameModal').hidden=true; };
+$('#renameSave').onclick=()=>{
+  const name=$('#renameInput').value.trim();
+  if(!name) return toast('请输入空间名称');
+  if(Store.renameSpace(state.code, name)){
+    $('#renameModal').hidden=true;
+    $('#spaceName').textContent=name;
+    renderSpaceMgmt();
+    toast('空间已改名，稍后自动同步给成员');
+  } else toast('只有创建者可以修改空间名称');
+};
 $('#switchSpaceBtn').onclick=()=>{ spaceItems($('#switchList'), (s)=>{ $('#switchModal').hidden=true; enterSpace(s.code); }); $('#switchModal').hidden=false; };
 $('#swSettings').onclick=()=>{ $('#switchModal').hidden=true; openSettings(); };
-$('#swHome').onclick=()=>{ $('#switchModal').hidden=true; state.code=null; initStart(); };
+$('#swHome').onclick=()=>{
+  $('#switchModal').hidden=true;
+  const prev=state.prevCode;
+  if(prev && prev!==state.code && Store.listSpaces().some(s=>s.code===prev) && needDav()){ enterSpace(prev); }
+  else { state.code=null; state.prevCode=null; initStart(); }
+};
 $('#swJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 $('#mgmtCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#mgmtJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
+  if(state.code && state.code!==code) state.prevCode=state.code;
   state.code=code;
   const data = Store.get(code) || (await Store.openRemote(code)).data;
   await Store.attach(code, data);
@@ -300,13 +335,23 @@ function startPolling(){
 }
 function stopPolling(){ if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; } }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && state.code) Store.syncCode(state.code).then(updateSyncChip); });
-Store.onChange((code)=>{ if(code===state.code){ renderPeopleTags(); renderCalendar(); updateSyncChip(); } });
+Store.onChange((code)=>{ if(code===state.code){
+  renderPeopleTags(); renderCalendar(); updateSyncChip();
+  const d=Store.get(code); if(d) $('#spaceName').textContent=d.name||'共享日程';
+  if(!$('#settingsScreen').classList.contains('hidden')) renderSpaceMgmt();
+} });
 
 function updateSyncChip(){
   const s=Store.status(state.code); const el=$('#syncState');
+  const btn=$('#syncBtn'); if(btn) btn.classList.toggle('spinning', !!s.syncing);
   if(!s.exists){ el.textContent=''; return; }
   el.textContent = s.syncing? '同步中…' : s.dirty? '待同步（离线可写）' : s.lastSync? '已同步 '+new Date(s.lastSync).toLocaleTimeString() : '';
 }
+$('#syncBtn').onclick=()=>{
+  if(!state.code) return;
+  updateSyncChip();
+  Store.syncCode(state.code).then(updateSyncChip);
+};
 $('#copyCode').onclick=()=>{
   const code=$('#codeText').textContent;
   if(navigator.clipboard) navigator.clipboard.writeText(code).then(()=>toast('邀请码已复制：'+code)).catch(()=>toast('邀请码：'+code));
@@ -446,7 +491,7 @@ function fillImportOwner(){
   });
   sel.value=myId();
 }
-$('#importBtn').onclick=()=>{ fillImportOwner(); $('#permBtn').hidden=true; $('#importModal').hidden=false; };
+$('#importBtn').onclick=()=>{ if(!state.code) return toast('请先进入一个空间'); fillImportOwner(); $('#permBtn').hidden=true; $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
 $('#permBtn').onclick=()=>CalBridge.openSettings();
 $('#sysImportBtn').onclick=async()=>{

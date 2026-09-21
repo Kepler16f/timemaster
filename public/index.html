@@ -48,7 +48,6 @@
       <div class="nav-group">
         <button id="prevBtn" class="nav-btn">‹</button>
         <button id="nextBtn" class="nav-btn">›</button>
-        <button id="importBtn" class="icon-btn" title="导入日历">⤓</button>
         <button id="switchSpaceBtn" class="icon-btn" title="切换空间">☰</button>
       </div>
     </header>
@@ -56,6 +55,9 @@
     <div class="space-chip" id="spaceChip">
       <span id="spaceName">空间</span>
       <button id="copyCode" class="code-btn">邀请码 <b id="codeText">--------</b> 复制</button>
+      <button id="syncBtn" class="sync-btn" title="立即同步">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.6-5.7L20 8.5"/><path d="M20 12a8 8 0 0 1-13.6 5.7L4 15.5"/><polyline points="20 3.5 20 8.5 15 8.5"/><polyline points="4 20.5 4 15.5 9 15.5"/></svg>
+      </button>
       <span id="syncState" class="sync-state"></span>
     </div>
 
@@ -143,10 +145,19 @@
       <div class="set-group">
         <div class="set-title">空间管理</div>
         <div id="spaceMgmtList" class="space-list"></div>
+        <div class="set-row"><span>当前空间名称</span><span class="set-val" id="curSpaceName">—</span></div>
+        <button class="big-btn ghost hidden" id="renameBtn">✏️ 重命名当前空间</button>
+        <p class="set-note hidden" id="renameLockNote">空间名称仅创建者可修改。</p>
         <div class="set-actions">
           <button class="big-btn ghost" id="mgmtCreate">＋ 新建空间</button>
           <button class="big-btn ghost" id="mgmtJoin">🔑 邀请码加入</button>
         </div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">系统日历</div>
+        <button class="big-btn ghost" id="importBtn">🔄 导入 / 回写系统日历</button>
+        <p class="set-note">读取手机日历导入到空间，或把空间日程回写到系统日历。</p>
       </div>
 
       <div class="set-group">
@@ -175,7 +186,7 @@
       <button class="big-btn ghost" id="swJoin">🔑 用邀请码加入新空间</button>
       <div class="modal-actions">
         <button id="swSettings" class="action-btn">⚙ 设置</button>
-        <button id="swHome" class="action-btn">↩ 返回首页</button>
+        <button id="swHome" class="action-btn">↩ 返回</button>
       </div>
     </div>
   </div>
@@ -290,6 +301,20 @@
     </div>
   </div>
 
+  <!-- ============ 重命名空间 ============ -->
+  <div class="modal-mask" id="renameModal" hidden>
+    <div class="modal">
+      <h3>重命名空间</h3>
+      <label>空间名称
+        <input type="text" id="renameInput" placeholder="例如：宿舍三人组" maxlength="20" />
+      </label>
+      <div class="modal-actions">
+        <button id="renameCancel" class="action-btn">取消</button>
+        <button id="renameSave" class="action-btn primary">保存并同步</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ 导入弹窗 ============ -->
   <div class="modal-mask" id="importModal" hidden>
     <div class="modal">
@@ -315,6 +340,17 @@
       </div>
     </div>
   </div>
+
+  <nav class="tabbar hidden" id="tabbar">
+    <button class="tab" data-tab="room" id="tabRoom">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4.5" width="18" height="16.5" rx="3.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
+      <span>房间</span>
+    </button>
+    <button class="tab" data-tab="settings" id="tabSettings">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51.97z"/></svg>
+      <span>设置</span>
+    </button>
+  </nav>
 
   <div id="toast" class="toast"></div>
   <script src="transport.js"></script>

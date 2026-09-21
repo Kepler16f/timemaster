@@ -21,7 +21,12 @@
     return (a.by || '') > (b.by || '');
   }
   function merge(local, remote) {
-    const out = { v: 2, code: remote.code || local.code, name: remote.name || local.name, members: {}, events: {}, deletions: {} };
+    const out = { v: 2, code: remote.code || local.code, members: {}, events: {}, deletions: {} };
+    /* 名称按 nameUpdatedAt LWW；均无时间戳时远端优先（兼容旧数据） */
+    const ln = local.nameUpdatedAt || 0, rn = remote.nameUpdatedAt || 0;
+    out.name = (rn >= ln && remote.name) ? remote.name : (local.name || remote.name);
+    out.nameUpdatedAt = Math.max(ln, rn);
+    out.createdBy = remote.createdBy || local.createdBy;
     for (const src of [remote, local]) {
       for (const id in src.members) {
         if (!(id in out.members) || newer(src.members[id], out.members[id])) out.members[id] = src.members[id];
@@ -125,10 +130,30 @@
   function createSpace(code, name) {
     const id = myId();
     return {
-      v: 2, code, name,
+      v: 2, code, name, createdBy: id, nameUpdatedAt: 0,
       members: { [id]: { name: App.me.name, color: App.me.color, joinedAt: Date.now(), updatedAt: Date.now(), by: id } },
       events: {}, deletions: {},
     };
+  }
+
+  function creatorId(d) {
+    if (d.createdBy) return d.createdBy;
+    let best = null, ts = Infinity; // 旧空间无 createdBy：取最早加入的成员
+    for (const id in d.members) {
+      const j = d.members[id].joinedAt || 0;
+      if (j < ts) { ts = j; best = id; }
+    }
+    return best;
+  }
+
+  function renameSpace(code, name) {
+    const d = loadLocal(code).data;
+    if (!d || creatorId(d) !== myId()) return false;
+    mutate(code, (dd) => { dd.name = name; dd.nameUpdatedAt = Date.now(); });
+    const spaces = api.listSpaces();
+    const s = spaces.find((x) => x.code === code);
+    if (s) { s.name = name; localStorage.setItem('tm:spaces', JSON.stringify(spaces)); }
+    return true;
   }
 
   async function openRemote(code) { // 加入前读取远端
@@ -206,6 +231,8 @@
         });
       });
     },
+    renameSpace,
+    canRename(code) { const d = loadLocal(code).data; return !!d && creatorId(d) === myId(); },
   };
   window.Store = api;
 })();
