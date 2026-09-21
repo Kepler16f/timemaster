@@ -1,0 +1,14 @@
+node_modules/
+data/
+*.log
+.DS_Store
+android-shell/.gradle/
+android-shell/build/
+android-shell/app/build/
+android-shell/local.properties
+android-shell/.idea/
+harmony-shell/oh_modules/
+harmony-shell/build/
+harmony-shell/.hvigor/
+harmony-shell/.idea/
+*.tsbuildinfo

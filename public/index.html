@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#f0463a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="共享日程" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="style.css" />
+  <title>共享日程 · 多人 ETA</title>
+</head>
+<body>
+  <!-- ============ 直接使用（无登录） ============ -->
+  <section class="screen" id="startScreen">
+    <div class="auth-card">
+      <div class="brand">
+        <div class="brand-logo">📅</div>
+        <h1>共享日程</h1>
+        <p>多人共享 · 打开即用，无需注册</p>
+      </div>
+      <label>我的昵称
+        <input type="text" id="myName" placeholder="例如 小明" />
+      </label>
+      <label>我的标签颜色
+        <div class="color-picker" id="myColorPicker"></div>
+      </label>
+      <button class="big-btn" id="createBtn">＋ 创建共享空间</button>
+      <button class="big-btn ghost" id="joinBtn">🔑 用邀请码加入</button>
+      <div id="lastSpaceBox" class="hidden">
+        <button class="big-btn ghost" id="enterLastBtn">↩ 进入上次的空间</button>
+      </div>
+      <p class="auth-hint" id="startHint"></p>
+      <p class="how">创建后会得到 6 位邀请码，发给朋友即可一起用。</p>
+    </div>
+  </section>
+
+  <!-- ============ 日历主界面 ============ -->
+  <section class="screen hidden" id="calendarScreen">
+    <header class="topbar">
+      <div class="title-group">
+        <button id="todayBtn" class="today-btn">今天</button>
+        <h1 id="monthTitle">2026年9月</h1>
+      </div>
+      <div class="nav-group">
+        <button id="prevBtn" class="nav-btn">‹</button>
+        <button id="nextBtn" class="nav-btn">›</button>
+        <button id="importBtn" class="icon-btn" title="导入日历">⤓</button>
+        <button id="backStart" class="icon-btn" title="返回">☰</button>
+      </div>
+    </header>
+
+    <div class="space-chip" id="spaceChip">
+      <span id="spaceName">空间</span>
+      <button id="copyCode" class="code-btn">邀请码 <b id="codeText">------</b> 复制</button>
+    </div>
+
+    <div class="people-bar" id="peopleBar">
+      <span class="people-hint">成员：</span>
+      <div class="people-tags" id="peopleTags"></div>
+    </div>
+
+    <div class="week-header">
+      <div class="wh sun">日</div><div class="wh">一</div><div class="wh">二</div>
+      <div class="wh">三</div><div class="wh">四</div><div class="wh">五</div><div class="wh sat">六</div>
+    </div>
+
+    <div class="calendar" id="calendar"></div>
+    <p class="tip">同格内不同颜色的色块 = 不同成员的日程。点色块可删除，点空格可新建。</p>
+
+    <button class="fab" id="addBtn">＋</button>
+  </section>
+
+  <!-- ============ 创建/加入空间弹窗 ============ -->
+  <div class="modal-mask" id="spaceModal" hidden>
+    <div class="modal">
+      <h3 id="spaceModalTitle">创建共享空间</h3>
+      <label id="spaceNameLabel">空间名称
+        <input type="text" id="spaceNameInput" placeholder="例如：宿舍三人组" />
+      </label>
+      <label id="spaceCodeLabel" class="hidden">邀请码
+        <input type="text" id="spaceCodeInput" placeholder="6 位邀请码" style="text-transform:uppercase" />
+      </label>
+      <div class="modal-actions">
+        <button id="spaceCancel" class="action-btn">取消</button>
+        <button id="spaceSave" class="action-btn primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 新建日程弹窗 ============ -->
+  <div class="modal-mask" id="eventModal" hidden>
+    <div class="modal">
+      <h3>新建日程（归属于我）</h3>
+      <label>标题
+        <input type="text" id="evTitle" placeholder="例如：小组会议 / 论文DDL" />
+      </label>
+      <label>日期
+        <input type="date" id="evDate" />
+      </label>
+      <label class="checkbox"><input type="checkbox" id="evAllDay" /> 全天</label>
+      <div class="row time-row" id="timeRow">
+        <label>开始<input type="time" id="evStart" value="09:00" /></label>
+        <label>结束<input type="time" id="evEnd" value="10:00" /></label>
+      </div>
+      <label>类型
+        <select id="evType">
+          <option value="normal">普通日程</option>
+          <option value="work">班（调休上班）</option>
+          <option value="rest">休（放假）</option>
+        </select>
+      </label>
+      <label>备注<input type="text" id="evDesc" placeholder="可选" /></label>
+      <div class="modal-actions">
+        <button id="eventCancel" class="action-btn">取消</button>
+        <button id="eventSave" class="action-btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 导入弹窗 ============ -->
+  <div class="modal-mask" id="importModal" hidden>
+    <div class="modal">
+      <h3>从系统日历导入 (.ics)</h3>
+      <p class="import-tip">导出时务必选「<b>全部账户</b>」，这样别的 APP 写进系统日历的日程也会一起进来。可一次选多个 .ics 文件。</p>
+      <label>选择 .ics 文件（可多选）
+        <input type="file" id="icsFile" accept=".ics,text/calendar" multiple />
+      </label>
+      <label>归入成员
+        <select id="importOwner"></select>
+      </label>
+      <details class="export-help">
+        <summary>📱 鸿蒙 / 安卓 如何导出「全部账户」日程？</summary>
+        <p><b>鸿蒙（华为）：</b>打开「日历」→ 右上角四个点 / 设置 → 找到「导出」或「备份与恢复」→ 导出为 .ics，选择 <b>全部账户</b>。把文件发到自己微信/邮箱，下载后用本 APP 上传即可。</p>
+        <p><b>安卓（Google 日历 / 厂商日历）：</b>Google 日历在电脑网页版可逐个日历「导出」；手机端多在「设置 → 导出」里勾选所有账户。若日程存在本地或其他 APP 写入的账户，导出时记得全选。</p>
+        <p class="import-tip warn">⚠️ 网页 APP 受手机系统权限限制，无法直接读取系统日历，只能靠导出 .ics 再导入——这是目前能把所有账户日程「全量」拿进来的最稳方式。</p>
+      </details>
+      <div class="modal-actions">
+        <button id="importCancel" class="action-btn">取消</button>
+        <button id="importSave" class="action-btn primary">导入</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="transport.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "共享日程",
+  "short_name": "共享日程",
+  "description": "多人共享日程，手机随时查看彼此安排",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#f0463a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
