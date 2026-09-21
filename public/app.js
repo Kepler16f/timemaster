@@ -31,6 +31,24 @@ const state = {
 };
 
 const $ = (s) => document.querySelector(s);
+
+/* ---------- 主题（跟随系统/浅色/深色） ---------- */
+const THEME_KEY = 'tm:theme';
+const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme(){
+  const t = localStorage.getItem(THEME_KEY) || 'auto';
+  const dark = t === 'dark' || (t === 'auto' && darkMQ.matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelectorAll('#themeSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.val === t));
+}
+$('#themeSeg').onclick = (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  localStorage.setItem(THEME_KEY, b.dataset.val);
+  applyTheme();
+};
+if (darkMQ.addEventListener) darkMQ.addEventListener('change', () => { if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme(); });
+
 function pad(n){ return String(n).padStart(2,'0'); }
 function dateStr(y,m,d){ return `${y}-${pad(m)}-${pad(d)}`; }
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),1800); }
@@ -475,5 +493,6 @@ $('#nextBtn').onclick=()=>{ state.month++; if(state.month>12){state.month=1;stat
 $('#todayBtn').onclick=()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth()+1; renderCalendar(); };
 
 /* ---------- 启动 ---------- */
+applyTheme();
 initStart();
 if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话
