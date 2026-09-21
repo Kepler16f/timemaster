@@ -1,0 +1,13 @@
+/node_modules/
+/oh_modules/
+/hvigor/
+/.hvigor/
+/.cxx/
+/.test/
+/build/
+/outputs/
+/entry/build/
+/entry/oh_modules/
+/entry/.preview/
+/entry/src/main/resources/rawfile/www/
+/signature/

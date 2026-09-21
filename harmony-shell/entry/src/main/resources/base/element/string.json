@@ -1,0 +1,8 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "时间管理大师主模块" },
+    { "name": "ability_desc", "value": "时间管理大师" },
+    { "name": "app_label", "value": "时间管理大师" },
+    { "name": "calendar_reason", "value": "用于读取与回写系统日历，实现日程共享同步" }
+  ]
+}

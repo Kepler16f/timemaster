@@ -1,0 +1,10 @@
+{
+  "name": "entry",
+  "version": "0.0.6",
+  "description": "TimeMaster entry module",
+  "main": "",
+  "author": "timemaster",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {}
+}
