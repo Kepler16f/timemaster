@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.1.1';
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
@@ -160,9 +160,12 @@ $('#otpSendBtn').onclick=async()=>{
 $('#otpVerifyBtn').onclick=async()=>{
   const btn=$('#otpVerifyBtn'); btn.disabled=true;
   try{
-    const s = await Auth.verifyOtp($('#loginEmail').value, $('#otpCode').value);
-    renderAccountSection();
-    toast('登录成功，之后的操作以账户身份同步');
+    const oldKey=myId();
+    await Auth.verifyOtp($('#loginEmail').value, $('#otpCode').value);
+    const newKey=myId();
+    if(newKey!==oldKey) Store.migrateIdentity(oldKey, newKey); // 邮箱绑定到当前本地身份，而不是另建账户
+    renderAccountSection(); renderSpaceMgmt();
+    toast('登录成功，已将本机身份绑定到此邮箱');
     if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
   }catch(e){ toast(e.message); }
   finally{ btn.disabled=false; }
@@ -266,6 +269,8 @@ function spaceItems(listEl, onClick){
     else {
       const enter=document.createElement('button'); enter.className='si-btn'; enter.textContent='进入';
       enter.onclick=(ev2)=>{ ev2.stopPropagation(); if(needDav()) enterSpace(s.code); };
+      const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
+      clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
       const out=document.createElement('button'); out.className='si-btn danger'; out.textContent='移除';
       out.onclick=async(ev2)=>{
         ev2.stopPropagation();
@@ -273,7 +278,7 @@ function spaceItems(listEl, onClick){
         Store.removeSpace(s.code);
         if(state.code===s.code) initStart(); else renderSpaceMgmt();
       };
-      item.appendChild(enter); item.appendChild(out);
+      item.appendChild(enter); item.appendChild(clr); item.appendChild(out);
     }
     listEl.appendChild(item);
   });
@@ -306,7 +311,7 @@ $('#switchSpaceBtn').onclick=()=>{ spaceItems($('#switchList'), (s)=>{ $('#switc
 $('#swSettings').onclick=()=>{ $('#switchModal').hidden=true; openSettings(); };
 $('#swHome').onclick=()=>{
   $('#switchModal').hidden=true;
-  const prev=state.prevCode;
+  const prev=state.prevCode || localStorage.getItem('tm:prevSpace');
   if(prev && prev!==state.code && Store.listSpaces().some(s=>s.code===prev) && needDav()){ enterSpace(prev); }
   else { state.code=null; state.prevCode=null; initStart(); }
 };
@@ -314,9 +319,88 @@ $('#swJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 $('#mgmtCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#mgmtJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 
+/* ---------- 批量管理日程 ---------- */
+let batchIds=[]; const batchSel=new Set();
+$('#batchBtn').onclick=()=>{
+  if(!state.code || !Store.get(state.code)) return toast('请先进入一个空间');
+  renderBatch(); $('#batchModal').hidden=false;
+};
+function renderBatch(){
+  const data=Store.get(state.code);
+  batchIds=Object.keys(data.events).map(k=>data.events[k]).filter(e=>e.ownerId===myId())
+    .sort((a,b)=>a.date.localeCompare(b.date)||String(a.start||'').localeCompare(String(b.start||'')))
+    .map(e=>e.id);
+  batchSel.clear();
+  const box=$('#batchList'); box.innerHTML='';
+  if(!batchIds.length) box.innerHTML='<p class="set-note">这里还没有你自己创建的日程（导入的系统日程看归属标签）。</p>';
+  const idSet=new Set(batchIds);
+  batchIds.forEach(id=>{
+    const e=data.events[id];
+    const row=document.createElement('label'); row.className='batch-row';
+    const cb=document.createElement('input'); cb.type='checkbox';
+    cb.onchange=()=>{ cb.checked?batchSel.add(id):batchSel.delete(id); updateBatchBar(idSet); };
+    const span=document.createElement('span'); span.className='batch-t';
+    span.textContent=`${e.date}${e.start?' '+e.start:''} · ${e.title}`;
+    row.appendChild(cb); row.appendChild(span); box.appendChild(row);
+  });
+  updateBatchBar(idSet);
+}
+function updateBatchBar(idSet){
+  $('#batchDel').textContent=`删除所选（${batchSel.size}）`;
+  $('#batchDel').disabled=!batchSel.size;
+  const total=(idSet||new Set(batchIds)).size;
+  $('#batchAll').checked = total>0 && batchSel.size===total;
+}
+$('#batchAll').onchange=(ev)=>{
+  const on=ev.target.checked;
+  $('#batchList').querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked=on; });
+  batchSel.clear(); if(on) batchIds.forEach(id=>batchSel.add(id));
+  updateBatchBar();
+};
+$('#batchClose').onclick=()=>{ $('#batchModal').hidden=true; };
+$('#batchDel').onclick=async()=>{
+  if(!batchSel.size) return;
+  if(!await uiConfirm('批量删除日程',`将删除所选 ${batchSel.size} 条日程，并同步给空间所有成员。`,'删除')) return;
+  const n=Store.deleteEvents(state.code,[...batchSel]);
+  $('#batchModal').hidden=true;
+  toast(n?`已删除 ${n} 条日程`:'没有可删除的日程（仅能删除自己创建的）');
+};
+
+/* ---------- 清空云端空间数据 ---------- */
+let clearTarget=null;
+function openClearModal(code,name){
+  clearTarget=code;
+  $('#clearSpaceName').textContent=name;
+  $('#clearAlsoLocal').checked=false;
+  $('#clearModal').hidden=false;
+}
+$('#clearCancel').onclick=()=>{ $('#clearModal').hidden=true; };
+$('#clearOk').onclick=async()=>{
+  if(!clearTarget) return;
+  const btn=$('#clearOk'); btn.disabled=true;
+  try{
+    if(needDav()){
+      await Dav.remove(clearTarget);
+      const alsoLocal=$('#clearAlsoLocal').checked;
+      if(alsoLocal){
+        Store.removeSpace(clearTarget);
+        if(state.code===clearTarget) initStart(); else renderSpaceMgmt();
+        toast('云端与本机数据均已清空');
+      } else {
+        toast('云端数据已清空；本机数据保留，下次同步将以本机重建云端');
+      }
+    }
+    $('#clearModal').hidden=true;
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; }
+};
+
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
-  if(state.code && state.code!==code) state.prevCode=state.code;
+  if(state.code && state.code!==code){
+    state.prevCode=state.code;
+    localStorage.setItem('tm:prevSpace', state.code);
+  }
   state.code=code;
   const data = Store.get(code) || (await Store.openRemote(code)).data;
   await Store.attach(code, data);

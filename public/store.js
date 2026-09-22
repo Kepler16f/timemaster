@@ -253,6 +253,47 @@
       });
       return true;
     },
+    /* 批量删除（一次 mutate，只删自己的），返回实际删除条数 */
+    deleteEvents(code, ids) {
+      const d = loadLocal(code).data;
+      if (!d || !ids.length) return 0;
+      const mine = ids.filter((id) => d.events[id] && d.events[id].ownerId === myId());
+      if (!mine.length) return 0;
+      mutate(code, (dd) => {
+        mine.forEach((id) => {
+          if (!dd.events[id]) return;
+          dd.deletions[id] = Math.max(Date.now(), dd.events[id].updatedAt + 1);
+          delete dd.events[id];
+        });
+      });
+      return mine.length;
+    },
+    /* 登录/绑定邮箱：把此前本地身份名下的成员资料与日程整体迁移到新身份，而不是另建一个账户 */
+    migrateIdentity(oldKey, newKey) {
+      if (!oldKey || !newKey || oldKey === newKey) return;
+      api.listSpaces().forEach((s) => {
+        const d = loadLocal(s.code).data;
+        if (!d) return;
+        const hasOld = (d.members[oldKey] !== undefined) || d.createdBy === oldKey
+          || Object.keys(d.events).some((id) => d.events[id].ownerId === oldKey);
+        if (!hasOld) return;
+        mutate(s.code, (dd) => {
+          if (dd.members[oldKey]) {
+            dd.members[newKey] = Object.assign({}, dd.members[oldKey], { updatedAt: Date.now(), by: newKey });
+            delete dd.members[oldKey];
+          }
+          if (dd.createdBy === oldKey) dd.createdBy = newKey;
+          Object.keys(dd.events).forEach((id) => {
+            const e = dd.events[id];
+            if (e.ownerId === oldKey) {
+              e.ownerId = newKey;
+              e.updatedAt = Math.max(Date.now(), e.updatedAt + 1);
+              e.by = newKey;
+            }
+          });
+        });
+      });
+    },
     setProfile(code) {
       const id = myId();
       mutate(code, (d) => {

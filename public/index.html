@@ -148,6 +148,7 @@
         <div class="set-row"><span>当前空间名称</span><span class="set-val" id="curSpaceName">—</span></div>
         <button class="big-btn ghost hidden" id="renameBtn">✏️ 重命名当前空间</button>
         <p class="set-note hidden" id="renameLockNote">空间名称仅创建者可修改。</p>
+        <button class="big-btn ghost" id="batchBtn">☑️ 批量管理日程（当前空间）</button>
         <div class="set-actions">
           <button class="big-btn ghost" id="mgmtCreate">＋ 新建空间</button>
           <button class="big-btn ghost" id="mgmtJoin">🔑 邀请码加入</button>
@@ -204,6 +205,33 @@
       <div class="modal-actions">
         <button id="spaceCancel" class="action-btn">取消</button>
         <button id="spaceSave" class="action-btn primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 批量管理日程 ============ -->
+  <div class="modal-mask" id="batchModal" hidden>
+    <div class="modal">
+      <h3>批量管理日程</h3>
+      <p class="import-tip">仅可删除自己创建的日程；删除会同步给空间内所有成员。</p>
+      <label class="checkbox"><input type="checkbox" id="batchAll" />全选</label>
+      <div id="batchList" class="batch-list"></div>
+      <div class="modal-actions">
+        <button id="batchClose" class="action-btn">关闭</button>
+        <button id="batchDel" class="action-btn primary" disabled>删除所选（0）</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 清空云端数据 ============ -->
+  <div class="modal-mask" id="clearModal" hidden>
+    <div class="modal">
+      <h3>⚠️ 清空云端数据</h3>
+      <p class="import-tip">将删除网盘上「<b id="clearSpaceName"></b>」的空间文件，此操作不可恢复！其他成员将读不到这份数据。若不勾选下方选项，本机数据保留，且下次同步时会以本机数据在云端重建。</p>
+      <label class="checkbox"><input type="checkbox" id="clearAlsoLocal" />同时清空本机该空间数据</label>
+      <div class="modal-actions">
+        <button id="clearCancel" class="action-btn">取消</button>
+        <button id="clearOk" class="action-btn primary">确认清空</button>
       </div>
     </div>
   </div>

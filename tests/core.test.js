@@ -124,6 +124,31 @@ store.attach('C1', local);
   eq('dedupe: 清理后保留恰好 1 条', Object.values(store.get('C3').events).filter((e) => e.sourceUid === 'cal:1:42').length, 1);
   eq('dedupe: 清理后再导入不再产生重复', store.addEvents('C3', mk(2), 'zDevice'), 0);
 
+  /* ---------- 6. 批量删除 + 邮箱身份迁移 ---------- */
+  {
+    const ownIds = Object.keys(store.get('C3').events).filter((id) => store.get('C3').events[id].ownerId === 'zDevice');
+    store.mutate('C3', (d) => { d.events.otherEv = { id: 'otherEv', title: '他人日程', date: '2026-09-25', ownerId: 'someoneElse', updatedAt: Date.now() }; });
+    eq('batch: 只删自己的（他人项被过滤）', store.deleteEvents('C3', ownIds.concat(['otherEv'])), ownIds.length);
+    eq('batch: 自己的全部消失', Object.values(store.get('C3').events).filter((e) => e.ownerId === 'zDevice').length, 0);
+    eq('batch: 他人日程保留', !!store.get('C3').events.otherEv, true);
+    eq('batch: 已写删除墓碑', Object.keys(store.get('C3').deletions).length >= ownIds.length, true);
+  }
+  {
+    store.upsertSpaceMeta('C3', 'C3');
+    store.mutate('C3', (d) => { d.members.zDevice = { name: 'T', color: '#fff', joinedAt: 1, updatedAt: 1, by: 'zDevice' }; });
+    const keepId = store.addEvent('C3', { title: '迁移后新增', date: '2026-09-26' });
+    store.migrateIdentity('zDevice', 'u:mail');
+    const d = store.get('C3');
+    eq('migrate: 成员资料迁到新身份', d.members['u:mail'].name, 'T');
+    eq('migrate: 旧成员键移除', !!d.members.zDevice, false);
+    eq('migrate: 创建者迁移', d.createdBy, 'u:mail');
+    eq('migrate: 本机身份事件全部改写', Object.values(d.events).every((e) => e.ownerId === 'u:mail' || e.ownerId === 'someoneElse'), true);
+    eq('migrate: 不再有 zDevice 名下事件', Object.values(d.events).some((e) => e.ownerId === 'zDevice'), false);
+    win.Auth = { memberKey: () => 'u:mail' };
+    eq('migrate: 迁移后新身份仍可删除自己的旧日程', store.deleteEvent('C3', keepId), true);
+    delete win.Auth;
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

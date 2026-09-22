@@ -218,14 +218,20 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 
 /* ---------- 设置页 ---------- */
 .settings-body { padding: 4px 16px calc(104px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 18px; }
-.set-group { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.05); display: flex; flex-direction: column; gap: 14px; }
+.set-group { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.05); display: flex; flex-direction: column; gap: 16px; }
 .set-title { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; }
 .set-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-weak); }
 .set-row { display: flex; justify-content: space-between; align-items: center; font-size: 15px; }
 .set-val { color: var(--text-weak); font-size: 14px; }
 .set-note { font-size: 12px; color: var(--text-weak); line-height: 1.65; }
-.set-actions { display: flex; gap: 10px; }
+.set-actions { display: flex; gap: 14px; }
 .set-actions .big-btn { flex: 1; }
+.auth-card .big-btn { margin-bottom: 12px; }
+.auth-card #lastSpaceBox { margin-bottom: 0; }
+.batch-list { max-height: 44vh; overflow: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 6px; }
+.batch-row { flex-direction: row; align-items: center; gap: 10px; font-size: 15px; color: var(--text); padding: 9px 12px; border-radius: 12px; background: var(--tint); }
+.batch-row input { width: 18px; height: 18px; accent-color: var(--accent); flex: 0 0 auto; }
+.batch-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { font-size: 11px; background: var(--badge-bg); color: var(--badge-fg); padding: 2px 9px; border-radius: 10px; }
 .set-group .seg { margin: 0; }
 

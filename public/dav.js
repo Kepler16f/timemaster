@@ -74,6 +74,16 @@
     await safeRequest({ method: 'MKCOL', url: urlFor('/shared-calendar/'), headers: authHeaders() });
   }
 
+  /* 删除云端空间文件（清空原有数据） */
+  async function remove(code) {
+    const r = await safeRequest({ method: 'DELETE', url: urlFor('/shared-calendar/' + code + '.json'), headers: authHeaders() });
+    if (r.status === 401) throw new Error('网盘鉴权失败 (401)');
+    if (r.status !== 200 && r.status !== 202 && r.status !== 204 && r.status !== 205 && r.status !== 404) {
+      throw new Error('清空云端失败 HTTP ' + r.status);
+    }
+    return true;
+  }
+
   /* 连接测试：MKCOL(容忍405) + PROPFIND 根目录 */
   async function test() {
     const r = await safeRequest({
@@ -114,5 +124,5 @@
     return { spaceCode: o.c || null };
   }
 
-  window.Dav = { cfg, saveConfig, get, put, ensureDir, test, exportCode, importCode };
+  window.Dav = { cfg, saveConfig, get, put, remove, ensureDir, test, exportCode, importCode };
 })();
