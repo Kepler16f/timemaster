@@ -2,7 +2,6 @@
   "module": {
     "name": "entry",
     "type": "entry",
-    "srcEntry": "./ets",
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
     "deviceTypes": ["phone", "tablet"],
@@ -12,7 +11,7 @@
     "abilities": [
       {
         "name": "EntryAbility",
-        "srcFile": "ets/entryability/EntryAbility.ets",
+        "srcEntry": "./ets/entryability/EntryAbility.ets",
         "launchType": "standard",
         "description": "$string:ability_desc",
         "icon": "$media:app_icon",

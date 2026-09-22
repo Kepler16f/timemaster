@@ -203,14 +203,44 @@
     },
     addEvents(code, evs, ownerId) {
       const s = stamp();
+      let added = 0;
       mutate(code, (d) => {
-        const known = new Set(Object.keys(d.events).map((k) => d.events[k].sourceUid + '|' + d.events[k].date + '|' + d.events[k].title));
+        const key = (e) => e.sourceUid + '|' + e.date + '|' + e.title;
+        const known = new Set(Object.keys(d.events).map((k) => key(d.events[k])));
         evs.forEach((ev) => {
-          if (ev.sourceUid && known.has(ev.sourceUid + '|' + ev.date + '|' + ev.title)) return;
+          const k = ev.sourceUid ? key(ev) : null;
+          if (k) {
+            if (known.has(k)) return;
+            known.add(k); // 增量去重：同一批内的重复项（如循环日程多行）也只进一条
+          }
           const id = genId('e');
           d.events[id] = Object.assign({ id, ownerId: ownerId || myId(), type: 'normal' }, ev, { updatedAt: s.t, by: s.by });
+          added++;
         });
       });
+      return added;
+    },
+    /* 清理历史遗留的重复导入（同 sourceUid+date+title 的多条），只保留一条并广播删除 */
+    dedupe(code) {
+      const d = loadLocal(code).data;
+      if (!d) return 0;
+      const seen = new Set();
+      const dup = [];
+      Object.keys(d.events).forEach((id) => {
+        const e = d.events[id];
+        if (!e.sourceUid) return;
+        const k = e.sourceUid + '|' + e.date + '|' + e.title;
+        if (seen.has(k)) dup.push({ id, ts: e.updatedAt || 0 }); else seen.add(k);
+      });
+      if (!dup.length) return 0;
+      mutate(code, (dd) => {
+        dup.forEach(({ id, ts }) => {
+          if (!dd.events[id]) return;
+          dd.deletions[id] = Math.max(Date.now(), ts + 1);
+          delete dd.events[id];
+        });
+      });
+      return dup.length;
     },
     deleteEvent(code, id) {
       const d = loadLocal(code).data;

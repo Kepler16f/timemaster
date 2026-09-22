@@ -1,8 +1,8 @@
-/* ===== 时间管理大师 TimeMaster · 前端主逻辑（数据层：Store/Dav，无服务器依赖） ===== */
+/* ===== Reunion · 前端主逻辑（数据层：Store/Dav，无服务器依赖） ===== */
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.0.8';
+const APP_VERSION = '0.1.0';
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
@@ -320,6 +320,7 @@ async function enterSpace(code){
   state.code=code;
   const data = Store.get(code) || (await Store.openRemote(code)).data;
   await Store.attach(code, data);
+  Store.dedupe(code);
   Object.keys(data.members).forEach(id=>{ if(!(id in state.visible)) state.visible[id]=true; });
   state.visible[myId()]=true;
   $('#spaceName').textContent=data.name||'共享日程';
@@ -502,8 +503,8 @@ $('#sysImportBtn').onclick=async()=>{
     const now=Date.now(), YEAR=365*86400000;
     const list=await CalBridge.fetchEvents(now-YEAR, now+YEAR);
     if(!list.length) return toast('系统日历中近一年没有日程');
-    Store.addEvents(state.code, list, $('#importOwner').value||myId());
-    toast(`已导入 ${list.length} 条系统日程`);
+    const n=Store.addEvents(state.code, list, $('#importOwner').value||myId());
+    toast(n ? `已导入 ${n} 条系统日程（重复的已自动跳过）` : '没有新日程，之前都已导入过');
     $('#importModal').hidden=true;
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
 };

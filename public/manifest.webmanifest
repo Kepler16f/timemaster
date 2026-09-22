@@ -1,6 +1,6 @@
 {
-  "name": "共享日程",
-  "short_name": "共享日程",
+  "name": "Reunion",
+  "short_name": "Reunion",
   "description": "多人共享日程，手机随时查看彼此安排",
   "start_url": "/",
   "display": "standalone",

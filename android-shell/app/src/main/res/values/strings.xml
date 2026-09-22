@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">时间管理大师</string>
-    <string name="title_activity_main">时间管理大师</string>
+    <string name="app_name">Reunion</string>
+    <string name="title_activity_main">Reunion</string>
     <string name="package_name">com.timemaster.app</string>
     <string name="custom_url_scheme">com.timemaster.app</string>
 </resources>

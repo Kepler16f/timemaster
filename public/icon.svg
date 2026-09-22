@@ -1,14 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="40" fill="#f0463a"/>
-  <rect x="40" y="48" width="112" height="108" rx="14" fill="#fff"/>
-  <rect x="40" y="48" width="112" height="30" rx="14" fill="#ffd9d5"/>
-  <circle cx="64" cy="63" r="7" fill="#f0463a"/>
-  <circle cx="128" cy="63" r="7" fill="#f0463a"/>
-  <g fill="#f0463a">
-    <rect x="58" y="92" width="22" height="22" rx="5"/>
-    <rect x="86" y="92" width="22" height="22" rx="5" fill="#5B8FF9"/>
-    <rect x="114" y="92" width="22" height="22" rx="5" fill="#73D13D"/>
-    <rect x="58" y="120" width="22" height="22" rx="5" fill="#F6BD16"/>
-    <rect x="86" y="120" width="22" height="22" rx="5" fill="#9270CA"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f0463a"/>
+      <stop offset="1" stop-color="#e23a2e"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="40" fill="url(#bg)"/>
+  <rect x="54.75" y="54.75" width="82.5" height="82.5" rx="9.75" fill="#fff"/>
+  <path d="M54.75 64.5a9.75 9.75 0 0 1 9.75-9.75h63a9.75 9.75 0 0 1 9.75 9.75v18.75h-82.5z" fill="#fae7e4"/>
+  <rect x="80" y="48.4" width="5.25" height="12" rx="2.6" fill="#f0463a"/>
+  <rect x="107" y="48.4" width="5.25" height="12" rx="2.6" fill="#f0463a"/>
+  <g fill-opacity="0.8">
+    <circle cx="96" cy="97.9" r="18.75" fill="#5b8ff9"/>
+    <circle cx="87.4" cy="113.25" r="18.75" fill="#f6bd16"/>
+    <circle cx="104.6" cy="113.25" r="18.75" fill="#4ecdc4"/>
   </g>
 </svg>

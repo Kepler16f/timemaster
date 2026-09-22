@@ -9,7 +9,7 @@
     if (Cal) {
       try { await Cal.ensurePermission(); }
       catch (e) {
-        const err = new Error('未获得日历权限：请在系统设置 → 应用 → 时间管理大师 → 权限中开启「日历」');
+        const err = new Error('未获得日历权限：请在系统设置 → 应用 → Reunion → 权限中开启「日历」');
         err.needSettings = true;
         throw err;
       }
@@ -18,7 +18,7 @@
     if (isHar()) {
       try { await Transport.harmonyCall('calEnsure', []); }
       catch (e) {
-        const err = new Error('未获得日历权限：请在系统设置 → 应用 → 时间管理大师 → 权限中开启「日历」');
+        const err = new Error('未获得日历权限：请在系统设置 → 应用 → Reunion → 权限中开启「日历」');
         err.needSettings = true;
         throw err;
       }

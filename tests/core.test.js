@@ -112,6 +112,18 @@ store.attach('C1', local);
   eq('rename: 旧空间无 createdBy 时取最早成员', store.canRename('C1'), false); // C1 members a(joinedAt1) b(joinedAt2)，我是 otherDevice
   delete win.Auth;
 
+  /* ---------- 5. 系统日程导入去重（同批多行 / 重复导入 / 历史清理） ---------- */
+  const mk = (n) => Array.from({ length: n }, () => ({ title: '循环日程', date: '2026-09-22', allDay: true, sourceUid: 'cal:1:42' }));
+  eq('import: 同批 5 条重复只进 1 条', store.addEvents('C3', mk(5), 'zDevice'), 1);
+  eq('import: 再次导入 3 条全部跳过', store.addEvents('C3', mk(3), 'zDevice'), 0);
+  eq('import: 无 sourceUid 的事件照常导入', store.addEvents('C3', [{ title: '无UID', date: '2026-09-23', allDay: true }], 'zDevice'), 1);
+  store.mutate('C3', (d) => {
+    for (let i = 0; i < 2; i++) d.events['dup' + i] = { id: 'dup' + i, title: '循环日程', date: '2026-09-22', allDay: true, sourceUid: 'cal:1:42', ownerId: 'zDevice', updatedAt: Date.now() };
+  });
+  eq('dedupe: 清理历史重复 2 条', store.dedupe('C3'), 2);
+  eq('dedupe: 清理后保留恰好 1 条', Object.values(store.get('C3').events).filter((e) => e.sourceUid === 'cal:1:42').length, 1);
+  eq('dedupe: 清理后再导入不再产生重复', store.addEvents('C3', mk(2), 'zDevice'), 0);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

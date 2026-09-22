@@ -109,8 +109,11 @@ public class AndroidCalendarPlugin extends Plugin {
                 new String[]{String.valueOf(floor), String.valueOf(to), String.valueOf(from)}, null)) {
             SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
             SimpleDateFormat tf = new SimpleDateFormat("HH:mm", Locale.US);
+            // view_events 会为循环日程的每个实例出一行（字段相同），按事件 id 去重
+            java.util.HashSet<Long> seen = new java.util.HashSet<>();
             while (c != null && c.moveToNext()) {
                 long id = c.getLong(0), calId = c.getLong(1);
+                if (!seen.add(id)) continue;
                 boolean allDay = c.getInt(3) == 1;
                 long start = c.getLong(4);
                 long end = c.isNull(5) ? start : c.getLong(5);
