@@ -151,16 +151,31 @@ function renderAccountSection(){
   if(s) $('#acctEmail').textContent = s.email||'已登录';
   else { $('#otpCodeWrap').classList.add('hidden'); $('#otpVerifyBtn').classList.add('hidden'); $('#otpCode').value=''; }
 }
+const OTP_RESEND_SEC=90;
+const OTP_SEND_LABEL='📧 发送验证码';
+let otpTimer=null;
+function startOtpCountdown(btn){
+  clearInterval(otpTimer);
+  let left=OTP_RESEND_SEC;
+  btn.disabled=true; btn.textContent=`📧 重新发送（${left}s）`;
+  otpTimer=setInterval(()=>{
+    left--;
+    if(left<=0){ clearInterval(otpTimer); otpTimer=null; btn.disabled=false; btn.textContent=OTP_SEND_LABEL; }
+    else btn.textContent=`📧 重新发送（${left}s）`;
+  },1000);
+}
 $('#otpSendBtn').onclick=async()=>{
+  const btn=$('#otpSendBtn');
+  if(btn.disabled) return;
   const email=$('#loginEmail').value.trim();
-  const btn=$('#otpSendBtn'); btn.disabled=true;
+  btn.disabled=true;
   try{
     await Auth.sendOtp(email);
     $('#otpCodeWrap').classList.remove('hidden'); $('#otpVerifyBtn').classList.remove('hidden');
     $('#otpCode').focus();
     toast('验证码已发到邮箱，请查收');
-  }catch(e){ toast(e.message); }
-  finally{ btn.disabled=false; }
+    startOtpCountdown(btn);
+  }catch(e){ toast(e.message); btn.disabled=false; }
 };
 $('#otpVerifyBtn').onclick=async()=>{
   const btn=$('#otpVerifyBtn'); btn.disabled=true;
