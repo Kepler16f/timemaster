@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.timemaster.app",
     "vendor": "timemaster",
-    "versionCode": 22,
-    "versionName": "0.2.2",
+    "versionCode": 23,
+    "versionName": "0.2.3",
     "icon": "$media:app_icon",
     "label": "$string:app_name"
   }

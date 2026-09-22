@@ -48,7 +48,8 @@
       <div class="nav-group">
         <button id="prevBtn" class="nav-btn">‹</button>
         <button id="nextBtn" class="nav-btn">›</button>
-        <button id="switchSpaceBtn" class="icon-btn" title="切换空间">☰</button>
+        <button id="switchSpaceBtn" class="nav-btn" title="切换空间">☰</button>
+        <button id="backSpaceBtn" class="nav-btn hidden" title="回到上一个空间">↩</button>
       </div>
     </header>
 
@@ -80,6 +81,7 @@
         <div class="wh">三</div><div class="wh">四</div><div class="wh">五</div><div class="wh sat">六</div>
       </div>
       <div class="calendar" id="calendar"></div>
+      <button id="monthToggle" class="month-toggle hidden" title="展开/收起月历">⌃ 收起</button>
       <div id="agenda"></div>
     </div>
 
@@ -183,7 +185,7 @@
 
       <div class="set-group">
         <div class="set-title">关于</div>
-        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.2</span></div>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.3</span></div>
         <div id="updGroup" hidden style="display:flex;flex-direction:column;gap:14px">
           <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
           <div class="set-actions">

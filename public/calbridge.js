@@ -42,6 +42,9 @@
     };
   }
 
+  /* 我们写回系统日历的条目都带这枚标记；再读回来时据此跳过，免得自己导自己 */
+  const OWN_TAG = '[Reunion]';
+
   /* 拉取系统日程 → 空间事件格式（sourceUid 去重已内建） */
   async function fetchEvents(fromMs, toMs) {
     let events;
@@ -50,14 +53,17 @@
       const r = await Transport.harmonyCall('calFetch', [String(fromMs), String(toMs)]);
       events = (r && r.events) || [];
     } else throw new Error('系统日历同步需在 App 内使用');
-    return events.map(mapEvent);
+    return events.filter((e) => String(e.desc || '').indexOf(OWN_TAG) < 0).map(mapEvent);
   }
 
   function wire(ev) {
+    const who = ev.ownerName ? String(ev.ownerName) : '';
+    const desc = [ev.desc || '', who ? `${OWN_TAG} 创建者：${who}` : ''].filter(Boolean).join('\n');
     return {
-      id: ev.id, title: ev.title, date: ev.date, endDate: ev.endDate || '',
+      id: ev.id, title: ev.title + (who ? `（${who}）` : ''),
+      date: ev.date, endDate: ev.endDate || '',
       allDay: !!ev.allDay, start: ev.start || '', end: ev.end || '',
-      desc: ev.desc || '', location: ev.location || '',
+      desc: desc, location: ev.location || '',
       rruleStr: ev.rrule ? IcsParser.rruleToString(ev.rrule) : '',
     };
   }

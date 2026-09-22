@@ -12,8 +12,8 @@
   --swatch-ring: #fff; --sat: #2f6fed;
   /* 状态栏/导航条遮挡高度：鸿蒙壳通过 __setSafeInsets 覆盖，其余环境用 env() */
   --sa-top: env(safe-area-inset-top, 0px); --sa-bottom: env(safe-area-inset-bottom, 0px);
-  /* 时间轴：小时列宽 + 每列最小宽度（0px = 七列平分；手机上改成五列宽，其余左右滑） */
-  --tg-gutter: 40px; --tg-colw: 0px;
+  /* 时间轴：小时列宽 + 每列最小宽度（0px = 七列平分；手机上改成四列宽，其余左右滑）+ 每小时行高 */
+  --tg-gutter: 40px; --tg-colw: 0px; --hour-h: 58px;
   color-scheme: light;
 }
 html[data-theme="dark"] {
@@ -88,6 +88,9 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 #monthTitle { font-size: 22px; font-weight: 600; }
 .nav-group { display: flex; align-items: center; gap: 8px; }
 .nav-btn { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--panel); color: var(--text); font-size: 22px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+/* 周视图的区间标题会拆成两行（第一个日期+– 一行，第二个日期一行），日/月视图仍是一行 */
+#monthTitle { line-height: 1.15; }
+#monthTitle .l2 { display: block; }
 .icon-btn { border: none; background: transparent; font-size: 20px; cursor: pointer; color: var(--icon); padding: 4px 6px; }
 
 /* ---------- 空间列表 ---------- */
@@ -95,9 +98,9 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .space-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--tint); border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; cursor: pointer; transition: border-color .15s; }
 .space-item:active { background: var(--field-bg); }
 .space-item.current { border-color: var(--accent); background: var(--accent-soft); }
-.si-main { min-width: 0; }
+.si-main { min-width: 0; flex: 1 1 auto; }
 .si-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.si-now { font-size: 10px; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 8px; flex: 0 0 auto; }
+.si-now { font-size: 10px; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 8px; flex: 0 0 auto; margin-left: auto; }
 .si-meta { font-size: 12px; color: var(--text-weak); margin-top: 3px; }
 .si-btn { border: 1px solid var(--line); background: var(--panel); color: var(--sub); font-size: 13px; padding: 7px 13px; border-radius: 10px; cursor: pointer; flex: 0 0 auto; }
 .si-btn.danger { color: #e5484d; border-color: color-mix(in srgb, #e5484d 45%, transparent); }
@@ -130,11 +133,13 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .view-seg { margin: 0 12px 10px; flex: 0 0 auto; }
 
 /* ---------- 成员标签 ---------- */
-.people-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 12px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; box-shadow: 0 1px 3px rgba(0,0,0,.05); flex: 0 0 auto; }
-.people-hint { color: var(--text-weak); font-size: 13px; }
-.people-tags { display: flex; flex-wrap: wrap; gap: 8px; }
-.person-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 16px; font-size: 13px; cursor: pointer; border: 1.5px solid transparent; user-select: none; }
-.person-tag .dot { width: 10px; height: 10px; border-radius: 50%; }
+/* 成员条：挤成一行，人多时横向滑动，不占日历的竖向空间 */
+.people-bar { display: flex; align-items: center; gap: 8px; margin: 0 12px 8px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; box-shadow: 0 1px 3px rgba(0,0,0,.05); flex: 0 0 auto; overflow: hidden; }
+.people-hint { color: var(--text-weak); font-size: 12px; flex: 0 0 auto; }
+.people-tags { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; min-width: 0; }
+.people-tags::-webkit-scrollbar { display: none; }
+.person-tag { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 2px 9px; border-radius: 14px; font-size: 12px; cursor: pointer; border: 1.5px solid transparent; user-select: none; white-space: nowrap; }
+.person-tag .dot { width: 8px; height: 8px; border-radius: 50%; }
 .person-tag.off { opacity: .4; }
 
 /* ---------- 星期表头 & 月视图（只留日期 + 成员色块，整月一屏） ---------- */
@@ -143,6 +148,12 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .week-header .wh { padding: 2px 0; }
 .calendar { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 0 12px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
 .calendar.month { display: grid; grid-template-columns: repeat(7,1fr); grid-auto-rows: minmax(48px, 1fr); }
+/* 折叠态：只留选中日所在的那一行（JS 给该行加 .keep），上滑收起、点按钮还原 */
+.calendar.month.collapsed { grid-auto-rows: minmax(48px, auto); }
+.calendar.month.collapsed .cell { display: none; }
+.calendar.month.collapsed .cell.keep { display: flex; }
+.month-toggle { display: block; margin: 4px auto 2px; width: 108px; height: 24px; border-radius: 12px; border: 1px solid var(--line); background: var(--card); color: var(--text-weak); font-size: 13px; line-height: 1; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.month-toggle.hidden { display: none; }
 .cell { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 3px 2px 4px; display: flex; flex-direction: column; align-items: center; gap: 2px; overflow: hidden; cursor: pointer; }
 .cell:nth-child(7n) { border-right: none; }
 .cell.other { background: var(--cell-other); }
@@ -181,19 +192,22 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 /* ---------- 日 / 周视图时间轴 ---------- */
 /* 时间轴自己做滚动容器：纵向滚 24 小时（表头吸顶），横向滑过七天（小时列吸左） */
 .calendar.tgrid { overflow: auto; padding: 0; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; scrollbar-width: thin; }
-/* 手机上七天平分每格放不下标题，改成一次看五天、左右滑动看满七天 */
-@media (max-width: 599px) { :root { --tg-colw: calc((100vw - var(--tg-gutter) - 26px)/5); } }
+/* 手机上七天平分每格放不下标题，改成一次看四天、左右滑动看满七天 */
+@media (max-width: 599px) { :root { --tg-colw: calc((100vw - var(--tg-gutter) - 22px)/4); } }
 /* 三层（表头/全天/正文）必须等宽且同宽于轨道总宽，否则横向滑动时列会错开 */
 .tg-head, .tg-allday, .tg-body {
   width: calc(var(--tg-gutter) + var(--tg-n, 7) * var(--tg-colw)); min-width: 100%;
 }
-.tg-head { display: grid; position: sticky; top: 0; z-index: 6; background: var(--card); border-bottom: 1px solid var(--line); }
+/* 表头 + 全天行包一层一起吸顶：滚到下午也还能看见「全天」那几条 */
+.tg-pin { position: sticky; top: 0; z-index: 6; background: var(--card);
+  width: calc(var(--tg-gutter) + var(--tg-n, 7) * var(--tg-colw)); min-width: 100%; }
+.tg-head { display: grid; border-bottom: 1px solid var(--line); background: var(--card); }
 .tg-corner { display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 4px 4px 0; font-size: 10px; color: var(--weak2); position: sticky; left: 0; z-index: 8; background: var(--card); }
 .tg-hcell { text-align: center; padding: 6px 0 5px; font-size: 12px; color: var(--text-weak); border-left: 1px solid var(--line); cursor: pointer; }
 .tg-hcell.sun { color: var(--accent); } .tg-hcell.sat { color: var(--sat); }
 .tg-hcell .dnum { display: inline-block; min-width: 24px; font-size: 16px; font-weight: 600; color: var(--text); border-radius: 12px; padding: 1px 4px; }
 .tg-hcell.today .dnum { background: var(--accent); color: #fff; }
-.tg-allday { display: grid; border-bottom: 1px solid var(--line); }
+.tg-allday { display: grid; border-bottom: 1px solid var(--line); background: var(--card); }
 .tg-adlabel { font-size: 10.5px; color: var(--weak2); text-align: right; padding: 6px 4px 0 0; position: sticky; left: 0; z-index: 7; background: var(--card); }
 .tg-adcell { border-left: 1px solid var(--line); padding: 3px; display: flex; flex-direction: column; gap: 3px; min-height: 26px; }
 .ad-chip { border-radius: 4px; color: #fff; padding: 2px 5px; font-size: 11px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -215,6 +229,8 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .tg-ev.tight b, .tg-ev.tight .tm { display: inline; }
 .tg-ev.tight b::after { content: " · "; }
 .tg-now { position: absolute; left: 0; right: 0; border-top: 2px solid var(--accent); z-index: 5; pointer-events: none; }
+/* 标尺上的当前时间，精确到分钟；小时列本来就是吸左的，横滑也不会丢 */
+.tg-rnown { position: absolute; right: 3px; transform: translateY(-50%); font-size: 10px; line-height: 1.4; color: #fff; background: var(--accent); border-radius: 7px; padding: 0 4px; font-variant-numeric: tabular-nums; z-index: 6; pointer-events: none; }
 .tg-now::before { content: ""; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .tg-dayinfo { margin: 10px 12px 0; }
 
@@ -296,6 +312,9 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
   .cal-main.with-agenda > #agenda { grid-column: 2; grid-row: 1 / span 2; min-height: 0; overflow-y: auto; margin: 4px 0 0; }
   /* 格子按可用高度自适应，六行铺满而不是固定 48px */
   .calendar.month { grid-auto-rows: minmax(34px,1fr); }
+  .calendar.month.collapsed { grid-auto-rows: minmax(34px,auto); }
+  /* 平板空间够，月历不折叠 */
+  .month-toggle { display: none !important; }
   .calendar.month .cell { padding: 5px 4px 6px; gap: 4px; }
   .calendar.month .date-num { width: 28px; height: 28px; font-size: 15px; }
   .calendar.month .mdot { width: 9px; height: 9px; }
