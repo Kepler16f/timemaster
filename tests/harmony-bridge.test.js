@@ -24,6 +24,8 @@ vm.createContext(win);
 /* ---------- 假网盘服务器 + 假原生桥 ---------- */
 const files = new Map(); // pathname -> { content, etag, dir }
 let ver = 0;
+let serveEtag = true; // 有些网盘/反向代理不透传 etag，用来测退化路径
+let lastPutHeaders = null;
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 function done(id, err, resJson) { setTimeout(() => win.__harmonyNativeCb(id, err, resJson == null ? null : resJson), 0); }
 
@@ -32,6 +34,7 @@ function handleHttp(id, payload) {
   try {
     const { method, url, headers = {}, body = null } = JSON.parse(payload);
     const p = new win.URL(url).pathname;
+    if (method === 'PUT') lastPutHeaders = headers;
     if (method === 'PROPFIND') {
       r = { status: 207, headers: {}, body: '<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>' };
     } else if (method === 'MKCOL') {
@@ -51,7 +54,8 @@ function handleHttp(id, payload) {
       r = { status: 400, headers: {}, body: '' };
     }
   } catch (e) { return done(id, 'native failure: ' + e.message, null); }
-  done(id, null, JSON.stringify({ status: r.status, headers: r.headers, bodyBase64: r.body ? b64(r.body) : '' }));
+  const hdr = serveEtag ? r.headers : Object.assign({}, r.headers, { etag: undefined });
+  done(id, null, JSON.stringify({ status: r.status, headers: hdr, bodyBase64: r.body ? b64(r.body) : '' }));
 }
 
 win.__HarmonyNative = {
@@ -65,6 +69,7 @@ win.__HarmonyNative = {
   },
   calWrite(id, json) { const o = JSON.parse(json); done(id, null, JSON.stringify({ upserted: o.events.length, removed: 0 })); },
   calOpen(id) { done(id, null, null); },
+  deviceId(id) { done(id, null, '{"id":"native-device-1"}'); },
 };
 
 function load(file) { vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'public', file), 'utf8'), win, { filename: file }); }
@@ -87,6 +92,7 @@ const ok = (name, cond) => eq(name, !!cond, true);
   /* ---------- 1. 桥探测 ---------- */
   ok('bridge: hasHarmony', Transport.hasHarmony);
   ok('bridge: isNative', Transport.isNative);
+  eq('bridge: deviceId() 取到原生设备号', await Transport.deviceId(), 'native-device-1');
 
   /* ---------- 2. WebDAV 走原生 socket 桥 ---------- */
   Dav.saveConfig({ baseUrl: 'dav.jianguoyun.com/dav', user: 'me@x.com', pass: 'app-pass' });
@@ -136,6 +142,44 @@ const ok = (name, cond) => eq(name, !!cond, true);
   const wr = await CalBridge.writeBack(Object.values(Store.get('ABCD1234').events));
   ok('cal: 回写 upsert 数>0', wr.upserted > 0);
   await CalBridge.openSettings();
+
+  /* ---------- 5. 同步状态机：干净时也要拉取远端（新成员/新日程能显示） ---------- */
+  const s5 = Store.createSpace('SYNC5', '五人房');
+  await Store.attach('SYNC5', s5, null);
+  const r5 = await Dav.put('SYNC5', JSON.stringify(s5), null);
+  const g5 = await Dav.get('SYNC5');
+  await Store.attach('SYNC5', JSON.parse(g5.text), g5.etag);
+  const d5 = JSON.parse(g5.text);
+  d5.members.family1 = { name: '姐姐', color: '#F0463A', joinedAt: Date.now(), updatedAt: Date.now() + 1, by: 'family1' };
+  d5.events.f1 = { id: 'f1', ownerId: 'family1', title: '姐姐加的日程', date: '2026-09-28', type: 'normal', updatedAt: Date.now() + 2, by: 'family1' };
+  await Dav.put('SYNC5', JSON.stringify(d5), r5.etag);
+  await Store.syncCode('SYNC5'); // 本地无改动：不能提前 return，必须把远端合并进来
+  const c5 = Store.get('SYNC5');
+  ok('pull: 无本地改动也能拉到他人成员', !!c5.members.family1);
+  ok('pull: 无本地改动也能拉到他人日程', Object.values(c5.events).some((e) => e.title === '姐姐加的日程'));
+
+  /* ---------- 6. Dav.put 三态：null=仅新建 / 字符串=比对 etag / undefined=无条件覆盖 ---------- */
+  await Dav.put('SYNC5', JSON.stringify(d5), 'W"nope"');
+  eq('put: 传 etag → 带 If-Match', lastPutHeaders['If-Match'], 'W"nope"');
+  eq('put: etag 陈旧 → 412', (await Dav.put('SYNC5', JSON.stringify(d5), 'W"nope"')).status, 412);
+  const pull = await Dav.get('SYNC5');
+  ok('put: 陈旧 etag 未覆盖远端', JSON.parse(pull.text).members.family1 !== undefined);
+  eq('put: 传 null → 带 If-None-Match:* 且已存在时 412', (await Dav.put('SYNC5', JSON.stringify(d5), null)).status, 412);
+  eq('put: 传 undefined → 无条件覆盖', (await Dav.put('SYNC5', JSON.stringify(d5), undefined)).status, 204);
+
+  /* ---------- 7. 网盘不透传 etag 时退化为无条件覆盖，仍能收敛（旧版死循环回归） ---------- */
+  serveEtag = false;
+  const s7 = Store.createSpace('NOETAG', '无etag房');
+  await Store.attach('NOETAG', s7, null);
+  Store.addEvent('NOETAG', { title: '第一轮', date: '2026-09-29' });
+  await Store.syncCode('NOETAG');
+  eq('noEtag: 首轮写回后干净', Store.status('NOETAG').dirty, false);
+  Store.addEvent('NOETAG', { title: '第二轮', date: '2026-09-30' });
+  await Store.syncCode('NOETAG');
+  eq('noEtag: 次轮仍收敛（不死循环）', Store.status('NOETAG').dirty, false);
+  const t7 = Object.values(JSON.parse((await Dav.get('NOETAG')).text).events).map((e) => e.title);
+  ok('noEtag: 两轮事件都在云端', t7.includes('第一轮') && t7.includes('第二轮'));
+  serveEtag = true;
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

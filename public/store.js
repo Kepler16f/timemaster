@@ -61,38 +61,30 @@
   function notify(code) { listeners.forEach((fn) => fn(code)); }
   function onChange(fn) { listeners.push(fn); }
 
-  /* ---------- 同步状态机 ---------- */
+  /* ---------- 同步状态机 ----------
+     每轮：拉远端（带 etag，304 零流量）→ 合并 → 若有本地改动则写回。
+     写回 412（他端抢先更新）就把 etag 作废，下一轮重拉合并再写，最多 3 轮；
+     服务端不给 etag 时退化为无条件覆盖（此前已 GET 合并过，不会丢他端数据）。 */
   async function syncCode(code) {
     const c = loadLocal(code);
     if (c.syncing) return;
     c.syncing = true;
     try {
-      let guard = 0;
-      while (guard++ < 3) {
+      for (let round = 0; round < 3; round++) {
         const r = await Dav.get(code, c.etag);
-        if (r.status === 304) break;
-        if (r.status === 404) { c.etag = null; break; }
-        c.data = c.data ? merge(c.data, JSON.parse(r.text)) : JSON.parse(r.text);
-        c.etag = r.etag;
-        if (!c.dirty) { persist(code); notify(code); break; }
-      }
-      if (c.dirty && c.data) {
-        const p = await Dav.put(code, JSON.stringify(c.data), c.etag);
-        if (p.status === 412) { // 他端已更新 → 重拉合并再试一轮
+        if (r.status === 200) {
+          c.data = c.data ? merge(c.data, JSON.parse(r.text)) : JSON.parse(r.text);
+          c.etag = r.etag || null;
+        } else if (r.status === 404) {
           c.etag = null;
-          const r = await Dav.get(code);
-          if (r.status === 200) {
-            c.data = merge(c.data, JSON.parse(r.text));
-            c.etag = r.etag;
-          }
-          const p2 = await Dav.put(code, JSON.stringify(c.data), c.etag);
-          if (p2.status !== 412) { c.dirty = false; if (p2.etag) c.etag = p2.etag; }
-          notify(code);
-        } else {
-          c.dirty = false;
-          if (p.etag) c.etag = p.etag;
         }
-        persist(code);
+        if (!c.dirty || !c.data) { persist(code); notify(code); break; }
+        const p = await Dav.put(code, JSON.stringify(c.data), c.etag || (round > 0 ? undefined : null));
+        if (p.status === 412) { c.etag = null; continue; }
+        c.dirty = false;
+        if (p.etag) c.etag = p.etag;
+        persist(code); notify(code);
+        break;
       }
       c.lastSync = Date.now();
     } catch (e) {
@@ -158,7 +150,7 @@
 
   async function openRemote(code) { // 加入前读取远端
     const r = await Dav.get(code);
-    if (r.status === 404) throw new Error('邀请码无效（网盘上没有该空间）');
+    if (r.status === 404) throw new Error('网盘上没有该房间：邀请码有误，或对方连的是另一个网盘账号/目录');
     return { data: JSON.parse(r.text), etag: r.etag };
   }
 

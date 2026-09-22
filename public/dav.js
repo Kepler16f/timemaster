@@ -8,7 +8,9 @@
     u = (u || '').trim();
     if (!u) return u;
     if (!/^https?:\/\//i.test(u)) u = 'https://' + u.replace(/^\/+/, '');
-    return u.replace(/\/+$/, '');
+    u = u.replace(/\/+$/, '');
+    // 有人习惯把同步目录本身贴进地址栏，去掉以免出现 /shared-calendar/shared-calendar
+    return u.replace(/\/shared-calendar$/i, '');
   }
 
   function cfg() {
@@ -56,11 +58,11 @@
     return { status: 200, etag: findHeader(r.headers, 'etag'), text: r.text };
   }
 
-  /* PUT：If-Match 防覆盖；新建用 If-None-Match: * */
+  /* PUT：etag 传字符串=If-Match 防覆盖；传 null=仅新建(If-None-Match: *)；传 undefined=无条件覆盖 */
   async function put(code, text, etag) {
     const headers = Object.assign(authHeaders(), { 'Content-Type': 'application/json; charset=utf-8' });
-    if (etag) headers['If-Match'] = etag;
-    else headers['If-None-Match'] = '*';
+    if (etag === null) headers['If-None-Match'] = '*';
+    else if (etag) headers['If-Match'] = etag;
     const r = await safeRequest({
       method: 'PUT', url: urlFor('/shared-calendar/' + code + '.json'), headers, body: text,
     });

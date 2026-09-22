@@ -120,8 +120,8 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 /* ---------- 星期表头 & 月视图 ---------- */
 .week-header { display: grid; grid-template-columns: repeat(7,1fr); text-align: center; color: var(--text-weak); padding: 4px 0; font-size: 13px; }
 .week-header .sat { color: var(--sat); } .week-header .sun { color: var(--accent); }
-.calendar { display: grid; grid-template-columns: repeat(7,1fr); background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 0 12px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
-.cell { min-height: 92px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 4px 4px 6px; display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.calendar { display: grid; grid-template-columns: repeat(7,1fr); grid-auto-rows: minmax(124px,auto); background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 0 12px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
+.cell { min-height: 124px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 5px 3px 7px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 .cell:nth-child(7n) { border-right: none; }
 .cell.other { background: var(--cell-other); }
 .cell.other .date-num { color: var(--other-num); }
@@ -130,8 +130,9 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .daymark { font-size: 11px; padding: 0 4px; border-radius: 4px; align-self: flex-start; }
 .daymark.work { background: var(--work-bg); color: var(--work-fg); }
 .daymark.rest { background: var(--rest-bg); color: var(--rest-fg); }
-.events { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
-.ev { font-size: 11px; line-height: 1.3; padding: 2px 5px; border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; border-left: 3px solid; color: #fff; }
+.events { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+/* 日程标题两行换行显示：格子窄，单行省略会吃掉大半标题 */
+.ev { font-size: 11px; line-height: 1.35; padding: 3px 4px; border-radius: 5px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: normal; word-break: break-all; cursor: pointer; border-left: 3px solid; color: #fff; }
 .ev .ev-time { opacity: .85; margin-right: 2px; }
 .tip { color: var(--text-weak); font-size: 12px; text-align: center; margin: 14px 16px calc(104px + var(--sa-bottom)); line-height: 1.6; }
 

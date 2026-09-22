@@ -1,5 +1,7 @@
 package com.timemaster.app;
 
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.util.Base64;
 
 import com.getcapacitor.JSObject;
@@ -10,6 +12,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.IOException;
 import java.util.Iterator;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Call;
@@ -81,5 +84,19 @@ public class NativeHttpPlugin extends Plugin {
                 }
             }
         });
+    }
+
+    /** 设备标识存 SharedPreferences：WebView 的 localStorage 被清也不会换人 */
+    @PluginMethod
+    public void deviceId(PluginCall call) {
+        SharedPreferences sp = getContext().getSharedPreferences("reunion", Context.MODE_PRIVATE);
+        String id = sp.getString("deviceId", null);
+        if (id == null || id.isEmpty()) {
+            id = UUID.randomUUID().toString();
+            sp.edit().putString("deviceId", id).apply();
+        }
+        JSObject ret = new JSObject();
+        ret.put("id", id);
+        call.resolve(ret);
     }
 }

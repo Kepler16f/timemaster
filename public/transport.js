@@ -65,8 +65,24 @@
     return 'Basic ' + textToB64(user + ':' + pass);
   }
 
+  /** 壳内的稳定设备标识（原生存储，不受网页 localStorage 被清影响）；浏览器里返回 null */
+  async function deviceId() {
+    try {
+      if (cap && typeof cap.deviceId === 'function') {
+        const r = await cap.deviceId({});
+        return (r && r.id) || null;
+      }
+      const har = harmony();
+      if (har && typeof har.deviceId === 'function') {
+        const r = await harmonyCall('deviceId', []);
+        return (r && r.id) || null;
+      }
+    } catch (e) { /* 旧版壳没有这个方法 */ }
+    return null;
+  }
+
   window.Transport = {
-    request, basicAuth, harmonyCall,
+    request, basicAuth, harmonyCall, deviceId,
     get isNative() { return !!(cap || harmony()); },
     get hasHarmony() { return !!harmony(); },
   };

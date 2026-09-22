@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.1.4';
+const APP_VERSION = '0.1.5';
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
 window.__setSafeInsets = function (topPx, bottomPx) {
@@ -18,17 +18,43 @@ function getClientId() {
   return id;
 }
 
+/* 本机资料一旦生成就固定写回：否则每次启动换一个「用户xxx」，看着像又建了个新账号 */
+function getProfileKey(k, gen) {
+  let v = localStorage.getItem(k);
+  if (!v) { v = gen(); localStorage.setItem(k, v); }
+  return v;
+}
+
 window.App = {
   clientId: getClientId(),
   me: {
-    name: localStorage.getItem('tm:myName') || ('用户' + Math.floor(100 + Math.random() * 900)),
-    color: localStorage.getItem('tm:myColor') || PALETTE[Math.floor(Math.random() * PALETTE.length)],
+    name: getProfileKey('tm:myName', () => '用户' + Math.floor(100 + Math.random() * 900)),
+    color: getProfileKey('tm:myColor', () => PALETTE[Math.floor(Math.random() * PALETTE.length)]),
   },
 };
 
 /* 当前身份键：已登录=账户（跨设备一致），未登录=本机设备 */
 function myId(){ return (window.Auth && Auth.memberKey()) || App.clientId; }
 
+function showDeviceId(){ const el=$('#deviceIdShow'); if(el) el.textContent=App.clientId.slice(0,8); }
+
+/* 设备号以原生存储为准：网页 localStorage 被系统清掉时，不至于每次冷启动都变成一个新账号 */
+async function adoptNativeDeviceId(tries){
+  if (!window.Transport || !Transport.deviceId) return;
+  let nid = null;
+  try { nid = await Transport.deviceId(); } catch (e) { /* 旧壳无此方法 */ }
+  if (!nid) {
+    if (tries > 0) { await new Promise((r) => setTimeout(r, 250)); return adoptNativeDeviceId(tries - 1); }
+    return;
+  }
+  const old = App.clientId;
+  if (nid === old) { showDeviceId(); return; }
+  App.clientId = nid;
+  try { localStorage.setItem('tm:clientId', nid); } catch (e) { /* noop */ }
+  if (!(window.Auth && Auth.loggedIn())) Store.migrateIdentity(old, nid); // 未登录：本机旧身份整体并到新号
+  showDeviceId();
+  if (!state.code) initStart();
+}
 const state = {
   code: null,
   prevCode: null,
@@ -40,6 +66,10 @@ const state = {
 };
 
 const $ = (s) => document.querySelector(s);
+
+/* 成员默认可见：只有被手动点掉（visible[id]===false）的人才隐藏。
+   早先是"未定义即隐藏"，后来才同步进来的成员会因为 undefined 被整片藏掉——用户反馈"看不到房间里别人的日程" */
+const memberOn = (id) => state.visible[id] !== false;
 
 /* ---------- 主题（跟随系统/浅色/深色） ---------- */
 const THEME_KEY = 'tm:theme';
@@ -142,6 +172,8 @@ function saveDavFromForm(){
 }
 function openSettings(){
   fillDavForm(); refreshProfile(); renderSpaceMgmt(); renderAccountSection();
+  showDeviceId();
+  renderUpdate();
   $('#appVersion').textContent='v'+APP_VERSION;
   showScreen('settingsScreen');
 }
@@ -203,7 +235,11 @@ $('#otpVerifyBtn').onclick=async()=>{
   finally{ btn.disabled=false; }
 };
 $('#logoutBtn').onclick=()=>{
-  Auth.clear(); renderAccountSection(); toast('已退出，回到本机身份');
+  const oldKey=myId();
+  Auth.clear();
+  const newKey=myId();
+  if(newKey!==oldKey) Store.migrateIdentity(oldKey, newKey); // 退出后并回本机身份，别在空间里留下第二个账号
+  renderAccountSection(); toast('已退出，回到本机身份');
   if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
 };
 
@@ -217,14 +253,16 @@ $('#cfgImportSave').onclick=async()=>{
     try{
       await Dav.test();
       if(r.spaceCode){ await joinSpace(r.spaceCode); }
-      else { $('#settingsBack').onclick(); }
+      else { toast('该配置码没带房间，请在首页创建或用邀请码加入'); $('#settingsBack').onclick(); }
     }catch(e){ toast(e.message); }
   }catch(e){ toast(e.message); }
 };
 $('#cfgExportBtn').onclick=()=>{
   try{
-    $('#cfgExportText').value = Dav.exportCode(state.code || localStorage.getItem('tm:lastSpace') || '');
+    const sc = state.code || localStorage.getItem('tm:lastSpace') || '';
+    $('#cfgExportText').value = Dav.exportCode(sc);
     $('#cfgExportModal').hidden=false;
+    if(!sc) toast('本机还没有可用房间，对方导入后需自行创建/加入');
   }catch(e){ toast(e.message); }
 };
 $('#cfgExportClose').onclick=()=>{ $('#cfgExportModal').hidden=true; };
@@ -437,8 +475,6 @@ async function enterSpace(code){
   const data = Store.get(code) || (await Store.openRemote(code)).data;
   await Store.attach(code, data);
   Store.dedupe(code);
-  Object.keys(data.members).forEach(id=>{ if(!(id in state.visible)) state.visible[id]=true; });
-  state.visible[myId()]=true;
   $('#spaceName').textContent=data.name||'共享日程';
   $('#codeText').textContent=code;
   renderPeopleTags(); renderCalendar(); updateSyncChip();
@@ -482,10 +518,11 @@ function renderPeopleTags(){
   Object.keys(data.members).forEach(id=>{
     const m=data.members[id];
     const tag=document.createElement('span');
-    tag.className='person-tag'+(state.visible[id]?'':' off');
-    tag.style.borderColor=m.color; tag.style.background=state.visible[id]?m.color+'22':'transparent';
+    const on=memberOn(id);
+    tag.className='person-tag'+(on?'':' off');
+    tag.style.borderColor=m.color; tag.style.background=on?m.color+'22':'transparent';
     tag.innerHTML=`<span class="dot" style="background:${m.color}"></span>${escapeHtml(m.name)}${id===myId()?'（我）':''}`;
-    tag.onclick=()=>{ state.visible[id]=!state.visible[id]; renderPeopleTags(); renderCalendar(); };
+    tag.onclick=()=>{ state.visible[id]=!on; renderPeopleTags(); renderCalendar(); };
     wrap.appendChild(tag);
   });
 }
@@ -509,7 +546,7 @@ function renderCalendar(){
   const byDay={};
   Object.keys(data.events).forEach(id=>{
     const ev=data.events[id];
-    if(!state.visible[ev.ownerId] || !data.members[ev.ownerId]) return;
+    if(!memberOn(ev.ownerId) || !data.members[ev.ownerId]) return;
     IcsParser.expandOccurrences(ev, fromStr, toStr).forEach(ds=>{ (byDay[ds]=byDay[ds]||[]).push(ev); });
   });
 
@@ -628,7 +665,7 @@ $('#writeBackBtn').onclick=async()=>{
   if(!state.code) return;
   const data=Store.get(state.code); if(!data) return;
   const list=Object.keys(data.events).map(k=>data.events[k])
-    .filter(e=>state.visible[e.ownerId] && e.type!=='work' && e.type!=='rest');
+    .filter(e=>memberOn(e.ownerId) && e.type!=='work' && e.type!=='rest');
   if(!list.length) return toast('没有可回写的日程');
   try{
     await CalBridge.ensurePermission();
@@ -647,6 +684,54 @@ $('#importSave').onclick=async()=>{
   $('#importModal').hidden=true; toast(`导入 ${parsed.length} 条（循环日程存规则，不炸开）`);
 };
 
+/* ---------- 应用内更新 ---------- */
+let updInfo = null;
+function renderUpdate(){
+  const dl=$('#updDlBtn'), ins=$('#updInstallBtn'), note=$('#updNote');
+  const rdy = Update.ready();
+  dl.hidden = !(updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy;
+  ins.hidden = !(rdy && Update.canAutoInstall);
+  note.hidden = !updInfo;
+  if(updInfo){
+    const lines=[];
+    if(rdy) lines.push(`v${rdy.ver} 安装包已就绪，点立即安装`);
+    else if(updInfo.hasUpdate) lines.push(`新版本 v${updInfo.latest}：${(updInfo.notes||'').replace(/\s+/g,' ').slice(0,120)}`);
+    else lines.push(`已是最新版本 v${updInfo.latest}`);
+    if(!Update.canAutoInstall) lines.push('本平台不能自动安装，请到发布页下载：'+(updInfo.page||''));
+    note.textContent=lines.join('\n');
+  }
+}
+$('#updCheckBtn').onclick=async()=>{
+  const st=$('#updState'); st.textContent='检查中…';
+  try{
+    updInfo = await Update.check(APP_VERSION);
+    st.textContent = updInfo.hasUpdate ? `发现新版 v${updInfo.latest}` : `已是最新 v${APP_VERSION}`;
+    if(updInfo.hasUpdate && !Update.canAutoInstall) st.textContent += '（需手动安装）';
+    renderUpdate();
+  }catch(e){ st.textContent='检查失败'; toast(e.message); }
+};
+$('#updDlBtn').onclick=async()=>{
+  const st=$('#updState'), btn=$('#updDlBtn');
+  if(!updInfo || !updInfo.url) return toast('没有可用的安装包');
+  btn.disabled=true; st.textContent='后台下载 0%';
+  try{
+    const path = await Update.download(updInfo.url, (p)=>{
+      const pct = p && p.total ? Math.floor(p.received/p.total*100) : 0;
+      st.textContent = `下载中 ${pct}%（可退出此页，不影响）`;
+    });
+    Update.markReady(updInfo.latest, path);
+    st.textContent = `v${updInfo.latest} 已下载完成`;
+    toast('下载完成，点「立即安装」');
+  }catch(e){ st.textContent='下载失败：'+e.message; }
+  finally{ btn.disabled=false; renderUpdate(); }
+};
+$('#updInstallBtn').onclick=async()=>{
+  const rdy = Update.ready();
+  if(!rdy) return toast('还没有下载好的安装包');
+  try{ await Update.install(rdy.path); toast('已交给系统安装'); }
+  catch(e){ toast(e.message); }
+};
+
 /* ---------- 月份导航 & FAB ---------- */
 $('#myName').oninput=onNameInput;
 $('#addBtn').onclick=()=>openEventModal();
@@ -657,4 +742,7 @@ $('#todayBtn').onclick=()=>{ const t=new Date(); state.year=t.getFullYear(); sta
 /* ---------- 启动 ---------- */
 applyTheme();
 initStart();
+showDeviceId();
+renderUpdate(); // 进页面就按「已下载/无更新」摆好更新按钮，不必等到设置页
+adoptNativeDeviceId(8); // 鸿蒙桥可能晚于首屏才注入，重试等一会儿
 if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话

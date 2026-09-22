@@ -1,11 +1,13 @@
 import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { preferences } from '@kit.ArkData';
 import { HarmonyHttp } from './HarmonyHttp';
 import { HarmonyCalendar } from './HarmonyCalendar';
 
 export class HarmonyNative {
   private static readonly inst: HarmonyNative = new HarmonyNative();
+  private static devId: string = '';
   private ctrl: webview.WebviewController | null = null;
   private ctx: common.UIAbilityContext | null = null;
 
@@ -75,5 +77,38 @@ export class HarmonyNative {
       return win.setWindowSystemBarProperties(props);
     }).then(() => this.reply(id, null, '{}'))
       .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
+  /* 设备标识存在原生偏好里：网页 localStorage 被清也不会换人 */
+  deviceId(id: string): void {
+    const ctx = this.ctx;
+    if (ctx === null) {
+      this.reply(id, '上下文未就绪', null);
+      return;
+    }
+    HarmonyNative.readDeviceId(ctx)
+      .then((v: string) => this.reply(id, null, '{"id":' + JSON.stringify(v) + '}'))
+      .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
+  private static newId(): string {
+    const r1: string = Math.floor(Math.random() * 1e9).toString(36);
+    const r2: string = Math.floor(Math.random() * 1e9).toString(36);
+    return 'd' + Date.now().toString(36) + '-' + r1 + r2;
+  }
+
+  private static async readDeviceId(ctx: common.UIAbilityContext): Promise<string> {
+    if (HarmonyNative.devId.length > 0) {
+      return HarmonyNative.devId;
+    }
+    const store = await preferences.getPreferences(ctx, 'reunion');
+    let v: string = String(await store.get('deviceId', ''));
+    if (v.length === 0) {
+      v = HarmonyNative.newId();
+      await store.put('deviceId', v);
+      await store.flush();
+    }
+    HarmonyNative.devId = v;
+    return v;
   }
 }

@@ -117,7 +117,9 @@
             <button class="big-btn ghost" id="logoutBtn">退出登录</button>
           </div>
         </div>
+        <div class="set-row"><span>📱 本机标识</span><span class="set-val" id="deviceIdShow">—</span></div>
         <p class="set-note">登录后日程身份跟随账户：换手机登录同一邮箱，标签自动一致。不登录也完全可用（按本机身份）。</p>
+        <p class="set-note">完全退出后重开，上面这串应当不变；如果变了说明系统清掉了本机数据。</p>
       </div>
 
       <div class="set-group">
@@ -172,7 +174,14 @@
 
       <div class="set-group">
         <div class="set-title">关于</div>
-        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.1.4</span></div>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.1.5</span></div>
+        <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
+        <div class="set-actions">
+          <button class="big-btn ghost" id="updCheckBtn">🔄 检查更新</button>
+          <button class="big-btn hidden" id="updDlBtn">⬇ 后台下载新版</button>
+          <button class="big-btn hidden" id="updInstallBtn">📲 立即安装</button>
+        </div>
+        <p class="set-note" id="updNote" hidden></p>
         <p class="set-note">Reunion · 数据经由你自己的网盘同步，无第三方服务器。</p>
       </div>
 
@@ -387,6 +396,7 @@
   <script src="store.js"></script>
   <script src="auth.js"></script>
   <script src="calbridge.js"></script>
+  <script src="update.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

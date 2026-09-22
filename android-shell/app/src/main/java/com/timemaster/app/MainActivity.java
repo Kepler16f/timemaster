@@ -9,6 +9,7 @@ public class MainActivity extends BridgeActivity {
         // 必须在 super 之前注册，JS 侧才能拿到插件
         registerPlugin(NativeHttpPlugin.class);
         registerPlugin(AndroidCalendarPlugin.class);
+        registerPlugin(NativeUpdatePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

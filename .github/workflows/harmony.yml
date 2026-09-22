@@ -14,6 +14,9 @@ env:
   # 社区公开镜像（ErBWs/setup-ohos 自动从 ErBWs/ohos-sdk Releases 拉取，免登录、带 sha256 校验）
   CLT_VERSION: 5.0.13.200
 
+permissions:
+  contents: write
+
 jobs:
   hap:
     runs-on: ubuntu-24.04
@@ -81,3 +84,16 @@ jobs:
           name: timemaster.hap
           path: timemaster-*.hap
           archive: false
+
+      - name: 发布到 GitHub Release（App 内更新从这里取包）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
+          test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
+          cp $(ls timemaster-*.hap | head -1) "reunion-v$VER.hap"
+          git config user.name ci-bot && git config user.email ci-bot@users.noreply.github.com
+          git ls-remote --exit-code --tags origin "refs/tags/v$VER" >/dev/null 2>&1 || { git tag "v$VER"; git push origin "v$VER" || echo "标签已被另一条流水线创建，忽略"; }
+          gh release create "v$VER" --title "Reunion v$VER" --notes "CI 自动构建 · HAP 未签名时需自行签名安装" 2>/dev/null || true
+          gh release upload "v$VER" "reunion-v$VER.hap" --clobber
