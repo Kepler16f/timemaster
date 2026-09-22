@@ -19,7 +19,7 @@
       "srcPath": "./entry",
       "targets": [
         {
-          "name": "entry.default",
+          "name": "default",
           "applyToProducts": ["default"]
         }
       ]
