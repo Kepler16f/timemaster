@@ -1,6 +1,6 @@
 {
   "name": "timemaster",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "private": true,
   "description": "时间管理大师 TimeMaster — 多人共享日程（Android APK / HarmonyOS NEXT HAP · 坚果云 WebDAV 同步）",
   "scripts": {
