@@ -10,6 +10,8 @@
   --badge-bg: #f0f1f3; --badge-fg: #8a8f98;
   --sub: #444; --sub2: #666; --weak2: #888; --icon: #555;
   --swatch-ring: #fff; --sat: #2f6fed;
+  /* 状态栏/导航条遮挡高度：鸿蒙壳通过 __setSafeInsets 覆盖，其余环境用 env() */
+  --sa-top: env(safe-area-inset-top, 0px); --sa-bottom: env(safe-area-inset-bottom, 0px);
   color-scheme: light;
 }
 html[data-theme="dark"] {
@@ -75,7 +77,7 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 /* ---------- 顶栏 ---------- */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px 10px; position: sticky; top: 0; background: var(--bg); z-index: 10;
+  padding: calc(14px + var(--sa-top)) 16px 10px; position: sticky; top: 0; background: var(--bg); z-index: 10;
 }
 .title-group { display: flex; align-items: baseline; gap: 12px; }
 .today-btn { border: none; background: var(--accent); color: #fff; padding: 5px 14px; border-radius: 18px; font-size: 13px; cursor: pointer; }
@@ -131,16 +133,16 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .events { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; }
 .ev { font-size: 11px; line-height: 1.3; padding: 2px 5px; border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; border-left: 3px solid; color: #fff; }
 .ev .ev-time { opacity: .85; margin-right: 2px; }
-.tip { color: var(--text-weak); font-size: 12px; text-align: center; margin: 14px 16px calc(104px + env(safe-area-inset-bottom)); line-height: 1.6; }
+.tip { color: var(--text-weak); font-size: 12px; text-align: center; margin: 14px 16px calc(104px + var(--sa-bottom)); line-height: 1.6; }
 
 /* ---------- 悬浮新建按钮 ---------- */
-.fab { position: fixed; right: 18px; bottom: calc(96px + env(safe-area-inset-bottom)); width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-size: 28px; box-shadow: 0 4px 14px rgba(240,70,58,.45); cursor: pointer; z-index: 20; }
+.fab { position: fixed; right: 18px; bottom: calc(96px + var(--sa-bottom)); width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-size: 28px; box-shadow: 0 4px 14px rgba(240,70,58,.45); cursor: pointer; z-index: 20; }
 .fab:active { transform: scale(.94); }
 
 /* ---------- 底部标签栏（悬浮药丸） ---------- */
 .tabbar {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(12px + env(safe-area-inset-bottom)); z-index: 30;
+  bottom: calc(12px + var(--sa-bottom)); z-index: 30;
   display: flex; gap: 8px;
   background: var(--card); border: 1px solid var(--line); border-radius: 999px;
   padding: 6px; box-shadow: 0 8px 24px rgba(15,18,24,.16);
@@ -167,7 +169,7 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .modal {
   background: var(--panel); color: var(--text); width: 100%; max-width: 520px;
   border-radius: 26px 26px 0 0;
-  padding: 10px 22px calc(22px + env(safe-area-inset-bottom));
+  padding: 10px 22px calc(22px + var(--sa-bottom));
   display: flex; flex-direction: column; gap: 14px;
   max-height: 88vh; overflow: auto; -webkit-overflow-scrolling: touch;
   box-shadow: 0 -10px 44px rgba(0,0,0,.18);
@@ -218,7 +220,7 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .sync-state{font-size:11px;color:var(--weak2);margin-left:8px}
 
 /* ---------- 设置页 ---------- */
-.settings-body { padding: 4px 16px calc(104px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 18px; }
+.settings-body { padding: 4px 16px calc(104px + var(--sa-bottom)); display: flex; flex-direction: column; gap: 18px; }
 .set-group { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.05); display: flex; flex-direction: column; gap: 16px; }
 .set-title { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; }
 .set-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-weak); }

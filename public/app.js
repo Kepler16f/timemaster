@@ -2,7 +2,15 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.1.3';
+const APP_VERSION = '0.1.4';
+
+/* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
+window.__setSafeInsets = function (topPx, bottomPx) {
+  const dpr = window.devicePixelRatio || 1;
+  const s = document.documentElement.style;
+  s.setProperty('--sa-top', (topPx / dpr) + 'px');
+  s.setProperty('--sa-bottom', (bottomPx / dpr) + 'px');
+};
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
@@ -41,6 +49,10 @@ function applyTheme(){
   const dark = t === 'dark' || (t === 'auto' && darkMQ.matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   document.querySelectorAll('#themeSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.val === t));
+  /* 鸿蒙壳：沉浸式下状态栏图标叠在页面之上，颜色要跟随主题 */
+  if (window.Transport && Transport.hasHarmony && Transport.harmonyCall) {
+    Transport.harmonyCall('uiStatusBar', [dark ? '1' : '0']).catch(() => {});
+  }
 }
 $('#themeSeg').onclick = (e) => {
   const b = e.target.closest('.seg-btn');

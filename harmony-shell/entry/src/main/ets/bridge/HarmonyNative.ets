@@ -1,5 +1,6 @@
 import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import { HarmonyHttp } from './HarmonyHttp';
 import { HarmonyCalendar } from './HarmonyCalendar';
 
@@ -58,6 +59,21 @@ export class HarmonyNative {
   calOpen(id: string): void {
     HarmonyCalendar.openSettings(this.ctx)
       .then(() => this.reply(id, null, '{}'))
+      .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
+  /* 沉浸式下状态栏图标颜色（dark=1 时用浅色图标），网页主题切换时调用 */
+  uiStatusBar(id: string, dark: string): void {
+    const ctx = this.ctx;
+    if (ctx === null) {
+      this.reply(id, '上下文未就绪', null);
+      return;
+    }
+    const color: string = dark === '1' ? '#FFFFFF' : '#1A1A1A';
+    window.getLastWindow(ctx).then((win: window.Window) => {
+      const props: window.SystemBarProperties = { statusBarContentColor: color };
+      return win.setWindowSystemBarProperties(props);
+    }).then(() => this.reply(id, null, '{}'))
       .catch((e: Error) => this.reply(id, e.message, null));
   }
 }

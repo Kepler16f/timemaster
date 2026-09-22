@@ -24,9 +24,42 @@ function stdMethod(m: string): http.RequestMethod | null {
   return null;
 }
 
-export function b64(s: string): string {
-  const bytes: Uint8Array = new util.TextEncoder().encodeInto(s);
+/* Base64Helper 对零长输入会抛「Parameter error ... length greater than zero」，空响应体（204/304/404）必须先短路 */
+export function b64Bytes(bytes: Uint8Array): string {
+  if (bytes === null || bytes === undefined || bytes.byteLength === 0) return '';
   return new util.Base64Helper().encodeToStringSync(bytes);
+}
+
+/* chunked 传输编码：去掉「大小\r\n」框架，拼回真实正文（WebDAV 的 PROPFIND 响应常无 Content-Length） */
+function dechunk(src: Uint8Array): Uint8Array {
+  const dec = util.TextDecoder.create('utf-8');
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  let i = 0;
+  while (i < src.length) {
+    let j = i;
+    while (j + 1 < src.length && !(src[j] === 13 && src[j + 1] === 10)) j++;
+    if (j + 1 >= src.length) break;
+    let line = dec.decodeToString(src.subarray(i, j)).trim();
+    const semi = line.indexOf(';');
+    if (semi >= 0) line = line.substring(0, semi);
+    const size = parseInt(line, 16);
+    if (isNaN(size) || size < 0) break;
+    if (size === 0) break;
+    const start = j + 2;
+    const end = Math.min(start + size, src.length);
+    const piece: Uint8Array = src.slice(start, end);
+    parts.push(piece);
+    total += piece.byteLength;
+    i = end + 2;
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    out.set(p, off);
+    off += p.byteLength;
+  }
+  return out;
 }
 
 function normHeaders(raw: Object): Record<string, string> {
@@ -53,7 +86,7 @@ export class HarmonyHttp {
         const options: http.HttpRequestOptions = {
           method: std,
           header: headers,
-          expectDataType: http.HttpDataType.STRING,
+          expectDataType: http.HttpDataType.ARRAY_BUFFER,
           connectTimeout: 15000,
           readTimeout: 60000,
         };
@@ -61,8 +94,14 @@ export class HarmonyHttp {
           options.extraData = body;
         }
         const res = await h.request(url, options);
-        const text: string = typeof res.result === 'string' ? res.result as string : '';
-        const out: HttpOut = { status: res.responseCode, headers: normHeaders(res.header), bodyBase64: b64(text) };
+        /* 取字节而不是字符串：.ics 常被服务端标成 octet-stream，STRING 模式下 result 不是字符串 */
+        let bytes: Uint8Array = new Uint8Array(0);
+        if (res.result instanceof ArrayBuffer) {
+          bytes = new Uint8Array(res.result as ArrayBuffer);
+        } else if (typeof res.result === 'string') {
+          bytes = new util.TextEncoder().encodeInto(res.result as string);
+        }
+        const out: HttpOut = { status: res.responseCode, headers: normHeaders(res.header), bodyBase64: b64Bytes(bytes) };
         return JSON.stringify(out);
       } finally {
         h.destroy();
@@ -87,6 +126,7 @@ export class HarmonyHttp {
     for (const k of hs) {
       request += k + ': ' + headers[k] + '\r\n';
     }
+    request += 'Accept-Encoding: identity\r\n';
     if (body.length > 0) {
       request += 'Content-Length: ' + new util.TextEncoder().encodeInto(body).length + '\r\n';
     }
@@ -134,7 +174,6 @@ export class HarmonyHttp {
       }
       const decoder = util.TextDecoder.create('utf-8');
       const head = decoder.decodeToString(all.subarray(0, he));
-      const rest = decoder.decodeToString(all.subarray(he + 4));
       const lines = head.split('\r\n');
       const sm = /HTTP\/\d(?:\.\d)? (\d{3})/.exec(lines.length > 0 ? lines[0] : '');
       const outHeaders: Record<string, string> = {};
@@ -144,7 +183,20 @@ export class HarmonyHttp {
           outHeaders[lines[i].substring(0, idx).trim().toLowerCase()] = lines[i].substring(idx + 1).trim();
         }
       }
-      return { status: sm ? Number(sm[1]) : 0, headers: outHeaders, bodyBase64: b64(rest) };
+      let bodyBytes: Uint8Array = all.slice(he + 4);
+      const te = outHeaders['transfer-encoding'] || '';
+      if (te.toLowerCase().indexOf('chunked') >= 0) {
+        bodyBytes = dechunk(bodyBytes);
+      } else {
+        const cl = outHeaders['content-length'];
+        if (cl) {
+          const n = Number(cl);
+          if (!isNaN(n) && n >= 0 && n <= bodyBytes.byteLength) {
+            bodyBytes = bodyBytes.slice(0, n);
+          }
+        }
+      }
+      return { status: sm ? Number(sm[1]) : 0, headers: outHeaders, bodyBase64: b64Bytes(bodyBytes) };
     } finally {
       try {
         await tls.close();

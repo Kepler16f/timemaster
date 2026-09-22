@@ -6,15 +6,27 @@ import { HarmonyNative } from '../bridge/HarmonyNative';
 struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State diag: string = '';
+  @StorageProp('saTopPx') @Watch('pushInsets') saTopPx: number = 0;
+  @StorageProp('saBottomPx') @Watch('pushInsets') saBottomPx: number = 0;
   private proxyOk: boolean = false;
   private reloadTries: number = 0;
+  private pageReady: boolean = false;
+  /* refresh() 会让主文档出现一次被中断的加载错误，属正常现象，不报给用户 */
+  private reloading: boolean = false;
+
+  /* 状态栏/导航条避让区（物理像素）交给网页换算成 --sa-* 变量 */
+  private pushInsets(): void {
+    if (!this.pageReady) return;
+    this.controller.runJavaScript('window.__setSafeInsets(' + this.saTopPx + ',' + this.saBottomPx + ')')
+      .catch(() => {});
+  }
 
   private attachBridge(): void {
     try {
       HarmonyNative.i().bindWeb(this.controller);
       this.controller.registerJavaScriptProxy(
         HarmonyNative.i(), '__HarmonyNative',
-        ['httpRequest', 'calEnsure', 'calFetch', 'calWrite', 'calOpen'], []);
+        ['httpRequest', 'calEnsure', 'calFetch', 'calWrite', 'calOpen', 'uiStatusBar'], []);
       this.proxyOk = true;
     } catch (e) {
       this.diag = '注入桥失败：' + e.message;
@@ -36,6 +48,8 @@ struct Index {
       }
       if (this.reloadTries < 2) {
         this.reloadTries += 1;
+        this.pageReady = false;
+        this.reloading = true;
         this.diag = '桥未注入，正在重载重试（' + this.reloadTries + '/2）…';
         this.attachBridge();
         try { this.controller.refresh(); } catch (e) { this.diag = '重载失败：' + e.message; }
@@ -55,8 +69,9 @@ struct Index {
         .fileAccess(true)
         .zoomAccess(false)
         .onControllerAttached(() => { this.attachBridge(); })
-        .onPageEnd(() => { this.selfCheck(); })
+        .onPageEnd(() => { this.reloading = false; this.pageReady = true; this.pushInsets(); this.selfCheck(); })
         .onErrorReceive((event) => {
+          if (this.reloading) return;
           if (event !== undefined && event.request.isMainFrame()) {
             this.diag = '页面加载失败 ' + event.error.getErrorCode() + '：' + event.error.getErrorInfo();
           }
