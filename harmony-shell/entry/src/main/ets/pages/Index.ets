@@ -28,7 +28,9 @@ struct Index {
     this.controller.runJavaScript(
       '(function(){var o=window.__HarmonyNative;return (o&&typeof o.httpRequest==="function")?"ok":"missing:"+(typeof o);})()'
     ).then((v: string) => {
-      if (v === 'ok') {
+      /* runJavaScript 返回的是带引号的 JSON 字符串（"ok"），先去掉引号再比较 */
+      const s: string = v.split('"').join('');
+      if (s === 'ok') {
         if (this.diag !== '') { this.diag = ''; }
         return;
       }
@@ -39,7 +41,7 @@ struct Index {
         try { this.controller.refresh(); } catch (e) { this.diag = '重载失败：' + e.message; }
         return;
       }
-      this.diag = '桥未注入 window（' + v + '），网盘同步与系统日历不可用';
+      this.diag = '桥未注入 window（' + s + '），网盘同步与系统日历不可用';
     }).catch((e: Error) => { this.diag = '自检失败：' + e.message; });
   }
 

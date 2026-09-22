@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
