@@ -94,7 +94,7 @@ export class HarmonyHttp {
 
     const tls: socket.TLSSocket = socket.constructTLSSocketInstance();
     try {
-      await tls.connect({ address: { address: host, port: port }, alpnList: ['http/1.1'] });
+      await tls.connect({ address: { address: host, port: port } });
       await tls.send(request);
       // 已声明 Connection: close：一直读到连接关闭，按字节合并后再解码（避免正文截断/多字节字符跨块乱码）
       const chunks: Uint8Array[] = [];

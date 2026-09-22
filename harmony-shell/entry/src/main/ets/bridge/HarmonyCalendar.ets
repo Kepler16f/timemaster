@@ -184,7 +184,7 @@ export class HarmonyCalendar {
         startTime: startMs,
         endTime: endMs,
         description: marker + '|' + (w.desc || ''),
-        location: w.location || '',
+        location: { location: w.location || '' },
       };
       await cal.addEvent(ev);
       upserted++;
