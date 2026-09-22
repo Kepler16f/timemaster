@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # 手动运行时可勾选 publish，才会发 GitHub Release；push 只构建产物
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 发布为 GitHub Release（不勾则只留 Actions 产物）
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -49,6 +55,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # 发不发 Release 由人决定：push 触发的构建只留 Actions 产物
+          if [ "${{ inputs.publish }}" != "true" ]; then
+            echo "publish 未勾选，只构建产物不发 Release"
+            exit 0
+          fi
           VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
           test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
           cp android-shell/app/build/outputs/apk/debug/app-debug.apk "reunion-v$VER.apk"

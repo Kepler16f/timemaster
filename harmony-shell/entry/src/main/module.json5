@@ -13,6 +13,8 @@
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
         "launchType": "standard",
+        /* 手机/平板跟随系统的自动旋转开关；不写时默认按 unspecified 处理，手机上常被锁成竖屏 */
+        "orientation": "auto_rotation_restricted",
         "description": "$string:ability_desc",
         "icon": "$media:app_icon",
         "label": "$string:app_label",

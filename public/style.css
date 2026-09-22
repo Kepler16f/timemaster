@@ -164,10 +164,12 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .ag-sub { font-size: 12px; color: var(--text-weak); }
 .tl { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px 6px; margin-bottom: 10px; }
 .tl-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.tl-name { font-size: 12px; color: var(--sub); width: 52px; flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tl-track { position: relative; flex: 1 1 auto; height: 14px; border-radius: 7px; background: var(--tint); }
-.tl-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 5px; min-width: 6px; }
-.tl-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--weak2); padding-left: 60px; }
+/* 成员名固定列宽（这样每条轨道起点对齐），拉到能坐下大部分昵称，轨道相应压矮 */
+:root { --tl-name-w: 92px; }
+.tl-name { font-size: 12px; color: var(--sub); width: var(--tl-name-w); flex: 0 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-track { position: relative; flex: 1 1 auto; height: 12px; border-radius: 6px; background: var(--tint); }
+.tl-bar { position: absolute; top: 2px; bottom: 2px; border-radius: 4px; min-width: 6px; }
+.tl-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--weak2); padding-left: calc(var(--tl-name-w) + 8px); }
 .ev-card { display: flex; align-items: flex-start; gap: 10px; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
 .ec-time { font-size: 12.5px; color: var(--sub2); flex: 0 0 auto; font-variant-numeric: tabular-nums; padding-top: 1px; }
 .ec-main { min-width: 0; flex: 1 1 auto; }
@@ -202,10 +204,16 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .tg-cols { flex: 1 1 auto; min-width: 0; display: grid; position: relative; }
 .tg-col { position: relative; border-left: 1px solid var(--line); min-height: calc(var(--hour-h, 46px) * 24); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px var(--hour-h, 46px)); }
 .tg-col.today { background-color: var(--accent-soft); }
-.tg-ev { position: absolute; border-radius: 6px; color: #fff; font-size: 11px; line-height: 1.3; padding: 2px 4px; overflow: hidden; border-left: 3px solid; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.14); word-break: break-all; }
-.tg-ev b { display: block; font-size: 10.5px; font-weight: 600; opacity: .95; }
-.tg-ev .tm { display: block; font-size: 10px; opacity: .85; }
-.tg-ev .loc { display: block; font-size: 10px; opacity: .85; }
+/* 色块里文字优先：标题在前、时间在后，装不下就在块内上下滑着看完 */
+.tg-ev { position: absolute; border-radius: 6px; color: #fff; font-size: 12.5px; line-height: 1.35; padding: 3px 5px; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; touch-action: pan-y; scrollbar-width: none; border-left: 3px solid; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.14); word-break: break-all; }
+.tg-ev::-webkit-scrollbar { width: 0; height: 0; }
+.tg-ev b { display: block; font-size: 13px; font-weight: 600; opacity: .97; }
+.tg-ev .tm { display: block; font-size: 11.5px; opacity: .88; }
+.tg-ev .loc { display: block; font-size: 11.5px; opacity: .88; }
+/* 半小时以内的短日程：标题和时间挤在同一行 */
+.tg-ev.tight { padding: 1px 4px; }
+.tg-ev.tight b, .tg-ev.tight .tm { display: inline; }
+.tg-ev.tight b::after { content: " · "; }
 .tg-now { position: absolute; left: 0; right: 0; border-top: 2px solid var(--accent); z-index: 5; pointer-events: none; }
 .tg-now::before { content: ""; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
 .tg-dayinfo { margin: 10px 12px 0; }

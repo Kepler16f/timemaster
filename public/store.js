@@ -234,6 +234,21 @@
       });
       return dup.length;
     },
+    /* patch 里值为 null 的键会被删除（例如把「重复」改回不重复） */
+    updateEvent(code, id, patch) {
+      const d = loadLocal(code).data;
+      if (!d || !d.events[id]) return false;
+      if (d.events[id].ownerId !== myId()) return false; // 仅创建者可改
+      const s = stamp();
+      mutate(code, (dd) => {
+        const cur = dd.events[id];
+        if (!cur) return;
+        const next = Object.assign({}, cur, patch, { id, ownerId: cur.ownerId, updatedAt: Math.max(s.t, (cur.updatedAt || 0) + 1), by: s.by });
+        Object.keys(patch).forEach((k) => { if (patch[k] === null) delete next[k]; });
+        dd.events[id] = next;
+      });
+      return true;
+    },
     deleteEvent(code, id) {
       const d = loadLocal(code).data;
       if (!d || !d.events[id]) return false;

@@ -23,6 +23,16 @@ export class HarmonyNative {
     this.ctx = c;
   }
 
+  /* 侧滑返回落到「该退出」这一步时由壳层收尾：只有 UIAbility 自己能 terminateSelf */
+  exitApp(): void {
+    try {
+      if (this.ctx !== null) {
+        this.ctx.terminateSelf();
+      }
+    } catch (e) {
+    }
+  }
+
   private reply(id: string, err: string | null, resJson: string | null): void {
     if (this.ctrl === null) {
       return;

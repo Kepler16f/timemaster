@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.2.1';
+const APP_VERSION = '0.2.2';
 const VIEW_KEY = 'tm:view';
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
@@ -123,10 +123,46 @@ function showScreen(name){
 $('#tabRoom').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
 $('#tabSettings').onclick=openSettings;
 
-/* 键盘弹出时收起底栏：底栏是 fixed 定位，adjustResize 下会顶在键盘上方 */
-const isEditable=(el)=>!!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')&&!el.readOnly;
-document.addEventListener('focusin',(e)=>{ if(isEditable(e.target)) $('#tabbar').classList.add('kb-hide'); });
-document.addEventListener('focusout',()=>{ setTimeout(()=>{ if(!isEditable(document.activeElement)) $('#tabbar').classList.remove('kb-hide'); },150); });
+/* ---------- 返回手势（鸿蒙侧滑 / Android 实体键）：逐层回退，只在首页退出 ---------- */
+function closeTopModal(){
+  const masks=[...document.querySelectorAll('.modal-mask')].filter((m)=>!m.hidden);
+  if(!masks.length) return false;
+  const m=masks[masks.length-1]; // 后面的 mask 盖在上面
+  /* 优先点「取消/关闭」，让各自的清理逻辑走到（例如 eventCancel 要清 editingEvent）。
+     切换空间面板的「返回」是回上一个空间，不是关面板，所以不能点它 */
+  const btn=m.querySelector('#confirmNo,button[id$="Cancel"],button[id$="Close"]');
+  if(btn) btn.click(); else m.hidden=true;
+  return true;
+}
+/* 壳层调用：'stay' 已在应用内消化，'exit' 才交给系统退出应用 */
+window.__tmBack=function(){
+  if(closeTopModal()) return 'stay';
+  if(!$('#settingsScreen').classList.contains('hidden')){
+    showScreen(state.code && Store.get(state.code) ? 'calendarScreen' : 'startScreen');
+    return 'stay';
+  }
+  return 'exit';
+};
+
+/* 键盘弹出时收起底栏（fixed 定位会被顶到键盘上方）。
+   鸿蒙收起输入法不一定触发 focusout，所以盯「可视视口有没有被压矮」，输入法一退底栏就回来 */
+let kbBase={w:-1,h:0};
+function kbUp(){
+  const vv=window.visualViewport;
+  const w=Math.round(vv?vv.width:window.innerWidth);
+  const h=Math.round(Math.min(vv?vv.height:window.innerHeight, window.innerHeight));
+  if(w!==kbBase.w){ kbBase={w,h}; return false; } // 转屏等宽度变化时重取基线，别把横屏当成键盘
+  if(h>kbBase.h) kbBase.h=h;
+  return kbBase.h-h>120;
+}
+function syncTabbarKb(){ $('#tabbar').classList.toggle('kb-hide', kbUp()); }
+window.addEventListener('resize',syncTabbarKb);
+if(window.visualViewport){
+  window.visualViewport.addEventListener('resize',syncTabbarKb);
+  window.visualViewport.addEventListener('scroll',syncTabbarKb);
+}
+document.addEventListener('focusin',syncTabbarKb);
+document.addEventListener('focusout',syncTabbarKb);
 
 /* ---------- 资料（起始屏与设置页共用一份状态，双向刷新） ---------- */
 function buildColorPicker(box){
@@ -805,10 +841,12 @@ function layoutLanes(evs){
 function timedEvBlock(data, it, ds){
   const e=it.e, m=data.members[e.ownerId]||{name:'未知',color:'#999'};
   const b=el('div','tg-ev');
-  const span=Math.max(it.t-it.s,20);
+  const raw=it.t-it.s, span=Math.max(raw,40); /* 一小时以内的块连一行字都放不下：先给个最小高度，剩下的靠块内滚动看全 */
+  const tight=raw<=35;
+  if(tight) b.classList.add('tight');
   b.style.cssText=`top:${it.s/1440*100}%;height:${Math.min(span/1440*100,100-it.s/1440*100)}%;left:${it.lane/it.lanes*100}%;width:${100/it.lanes-1.2}%;background:${m.color};border-left-color:${shade(m.color,-25)}`;
   b.appendChild(el('b',null,e.title));
-  b.appendChild(el('span','tm',`${e.start||''}${e.end?'–'+e.end:''} ${m.name}`));
+  b.appendChild(el('span','tm',`${e.start||''}${e.end?'–'+e.end:''}${tight?'':' '+m.name}`));
   if(e.location) b.appendChild(el('span','loc','📍 '+e.location));
   b.onclick=(ev)=>{ ev.stopPropagation(); openDetail(e,data,ds); };
   return b;
@@ -843,10 +881,17 @@ function openDetail(ev, data, ds){
   $('#detailMeta').innerHTML=lines.map(l=>`<div class="dm-row">${escapeHtml(l)}</div>`).join('');
   const mine=ev.ownerId===myId();
   $('#detailDelete').classList.toggle('hidden', !mine);
+  $('#detailEdit').classList.toggle('hidden', !mine);
   $('#detailLockNote').classList.toggle('hidden', mine);
   $('#detailModal').hidden=false;
 }
 $('#detailClose').onclick=()=>{ $('#detailModal').hidden=true; };
+$('#detailEdit').onclick=()=>{
+  if(!detailEvent) return;
+  const ev=detailEvent;
+  $('#detailModal').hidden=true;
+  openEventModal(null, ev);
+};
 $('#detailDelete').onclick=async()=>{
   if(!detailEvent) return;
   if(!await uiConfirm('删除日程',`删除「${detailEvent.title}」？删除会同步给空间内所有成员。`,'删除')) return;
@@ -854,31 +899,45 @@ $('#detailDelete').onclick=async()=>{
   else toast('只有创建者可以删除这条日程');
 };
 
-/* ---------- 新建日程 ---------- */
-function openEventModal(presetDate){
-  $('#evTitle').value='';
-  $('#evDate').value=presetDate||state.day||todayStr();
-  $('#evAllDay').checked=false; $('#timeRow').style.display='flex';
-  $('#evStart').value='09:00'; $('#evEnd').value='10:00'; $('#evType').value='normal'; $('#evDesc').value='';
-  $('#evLocation').value='';
-  $('#evRepeat').value='none';
+/* ---------- 新建 / 编辑日程 ---------- */
+let editingEvent=null;
+function openEventModal(presetDate,ev){
+  editingEvent=ev||null;
+  $('#eventModalTitle').textContent=ev?'编辑日程':'新建日程（归属于我）';
+  $('#evTitle').value=ev?ev.title:'';
+  $('#evDate').value=(ev?ev.date:null)||presetDate||state.day||todayStr();
+  $('#evAllDay').checked=ev?!!ev.allDay:false;
+  $('#timeRow').style.display=$('#evAllDay').checked?'none':'flex';
+  $('#evStart').value=(ev&&ev.start)||'09:00'; $('#evEnd').value=(ev&&ev.end)||'10:00';
+  $('#evType').value=(ev&&ev.type)||'normal'; $('#evDesc').value=(ev&&ev.desc)||'';
+  $('#evLocation').value=(ev&&ev.location)||'';
+  $('#evRepeat').value=ev&&ev.rrule?(String(ev.rrule.freq||'none').toLowerCase()):'none';
   $('#eventModal').hidden=false;
 }
-$('#eventCancel').onclick=()=>{ $('#eventModal').hidden=true; };
+$('#eventCancel').onclick=()=>{ $('#eventModal').hidden=true; editingEvent=null; };
 $('#evAllDay').onchange=(e)=>{ $('#timeRow').style.display=e.target.checked?'none':'flex'; };
 $('#eventSave').onclick=async()=>{
   const date=$('#evDate').value; if(!date) return toast('请选择日期');
+  const allDay=$('#evAllDay').checked;
+  const rep=$('#evRepeat').value;
   const ev={
     title:$('#evTitle').value.trim()||'未命名日程', date,
-    allDay:$('#evAllDay').checked, start:$('#evAllDay').checked?'':$('#evStart').value,
-    end:$('#evAllDay').checked?'':$('#evEnd').value, type:$('#evType').value, desc:$('#evDesc').value,
+    allDay, start:allDay?'':$('#evStart').value,
+    end:allDay?'':$('#evEnd').value, type:$('#evType').value, desc:$('#evDesc').value,
     location:$('#evLocation').value.trim(),
+    rrule: rep!=='none' ? { freq:rep.toUpperCase(), interval:1, byDay:null, byMonthDay:null, count:null, until:null } : null,
   };
-  const rep=$('#evRepeat').value;
-  if(rep!=='none'){ ev.rrule={ freq:rep.toUpperCase(), interval:1, byDay:null, byMonthDay:null, count:null, until:null }; }
-  Store.addEvent(state.code, ev);
+  if(allDay) ev.endDate=null;
+  let ok=true;
+  if(editingEvent){
+    if(date!==editingEvent.date) ev.endDate=null; // 改了日期，原来的多天区间不再成立
+    ok=Store.updateEvent(state.code, editingEvent.id, ev);
+  } else {
+    Store.addEvent(state.code, ev);
+  }
   state.day=date; syncYm();
-  $('#eventModal').hidden=true; toast('已保存，稍后自动同步');
+  editingEvent=null;
+  $('#eventModal').hidden=true; toast(ok?'已保存，稍后自动同步':'只有创建者可以编辑这条日程');
 };
 
 /* ---------- 系统日历导入 / 回写 ---------- */

@@ -5,7 +5,6 @@ const TM_PREFIX = 'TimeMaster:';
 const DAY_MS = 86400000;
 /* CalendarKit 的 napi 层按字面量取键名，用数字常量避开不同 SDK 版本枚举名差异 */
 const EVENT_TYPE_NORMAL = 0;
-const CALENDAR_TYPE_LOCAL = 0;
 
 interface BizErr {
   message?: string;
@@ -28,10 +27,10 @@ async function labeled<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/* EventFilter 是带静态工厂的类，napi 侧对入参做 napi_unwrap：
+   传 { timeRange, calendarType } 这种对象字面量必然报 [23900001] invalid arg[0], i.e. invalid keys! */
 function timeFilter(fromMs: number, toMs: number): calendarManager.EventFilter {
-  const range: Record<string, Object> = { 'startTime': fromMs, 'endTime': toMs };
-  const filter: Record<string, Object> = { 'timeRange': range, 'calendarType': CALENDAR_TYPE_LOCAL };
-  return filter as Object as calendarManager.EventFilter;
+  return calendarManager.EventFilter.filterByTime(fromMs, toMs);
 }
 
 interface LocShape {

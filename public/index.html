@@ -183,7 +183,7 @@
 
       <div class="set-group">
         <div class="set-title">关于</div>
-        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.1</span></div>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.2</span></div>
         <div id="updGroup" hidden style="display:flex;flex-direction:column;gap:14px">
           <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
           <div class="set-actions">
@@ -262,7 +262,7 @@
   <!-- ============ 新建日程弹窗 ============ -->
   <div class="modal-mask" id="eventModal" hidden>
     <div class="modal">
-      <h3>新建日程（归属于我）</h3>
+      <h3 id="eventModalTitle">新建日程（归属于我）</h3>
       <label>标题
         <input type="text" id="evTitle" placeholder="例如：小组会议 / 论文DDL" />
       </label>
@@ -307,6 +307,7 @@
       <p id="detailLockNote" class="set-note hidden">该日程由他人创建，仅创建者可删除。</p>
       <div class="modal-actions">
         <button id="detailClose" class="action-btn">关闭</button>
+        <button id="detailEdit" class="action-btn primary hidden">编辑</button>
         <button id="detailDelete" class="action-btn danger">删除</button>
       </div>
     </div>

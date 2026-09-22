@@ -23,6 +23,18 @@ struct Index {
       .catch(() => {});
   }
 
+  /* 侧滑返回 / 返回键：先问网页有没有弹窗或子页可退，只有它说「该走了」才退出应用。
+     onBackPress 要同步给出结果，所以一律拦下，异步判定后再决定 terminateSelf */
+  onBackPress(): boolean {
+    if (!this.pageReady) return false;
+    this.controller.runJavaScript('window.__tmBack ? window.__tmBack() : "exit"')
+      .then((v: string) => {
+        if (v.split('"').join('') === 'exit') HarmonyNative.i().exitApp();
+      })
+      .catch(() => { HarmonyNative.i().exitApp(); });
+    return true;
+  }
+
   private attachBridge(): void {
     try {
       HarmonyNative.i().bindWeb(this.controller);
