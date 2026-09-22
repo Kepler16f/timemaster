@@ -22,6 +22,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-java@v4
         with:
@@ -94,6 +96,13 @@ jobs:
           test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
           cp $(ls timemaster-*.hap | head -1) "reunion-v$VER.hap"
           git config user.name ci-bot && git config user.email ci-bot@users.noreply.github.com
+          TAG_SHA=$(git ls-remote origin "refs/tags/v$VER" | awk '{print $1}')
+          if [ -n "$TAG_SHA" ] && [ "$TAG_SHA" != "$(git rev-parse HEAD)" ]; then
+            echo "::warning::v$VER 已发布于 $TAG_SHA，与当前提交不同 —— 跳过发布。请先提升 public/app.js 的 APP_VERSION。"
+            exit 0
+          fi
           git ls-remote --exit-code --tags origin "refs/tags/v$VER" >/dev/null 2>&1 || { git tag "v$VER"; git push origin "v$VER" || echo "标签已被另一条流水线创建，忽略"; }
-          gh release create "v$VER" --title "Reunion v$VER" --notes "CI 自动构建 · HAP 未签名时需自行签名安装" 2>/dev/null || true
+          bash scripts/release-notes.sh "$VER" RELEASE_NOTES.md
+          gh release create "v$VER" --title "Reunion v$VER" --notes-file RELEASE_NOTES.md 2>/dev/null || true
+          gh release edit "v$VER" --title "Reunion v$VER" --notes-file RELEASE_NOTES.md
           gh release upload "v$VER" "reunion-v$VER.hap" --clobber
