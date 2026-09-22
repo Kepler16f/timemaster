@@ -12,6 +12,8 @@
   --swatch-ring: #fff; --sat: #2f6fed;
   /* 状态栏/导航条遮挡高度：鸿蒙壳通过 __setSafeInsets 覆盖，其余环境用 env() */
   --sa-top: env(safe-area-inset-top, 0px); --sa-bottom: env(safe-area-inset-bottom, 0px);
+  /* 时间轴：小时列宽 + 每列最小宽度（0px = 七列平分；手机上改成五列宽，其余左右滑） */
+  --tg-gutter: 40px; --tg-colw: 0px;
   color-scheme: light;
 }
 html[data-theme="dark"] {
@@ -106,6 +108,10 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .cal-main { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: calc(112px + var(--sa-bottom)); }
 /* 日/周视图右下角有悬浮新建按钮，多留一段免得压住最后一行 */
 .cal-main:not(.with-agenda) { padding-bottom: calc(156px + var(--sa-bottom)); }
+/* 日/周视图改由时间轴自己滚动（横向滑着看七天、纵向表头要一直露着），外层不再滚 */
+.cal-main.tgrid-mode { overflow: hidden; }
+.cal-main.tgrid-mode:not(.with-agenda) { padding-bottom: calc(96px + var(--sa-bottom)); }
+.cal-main.tgrid-mode > #calendar { height: 100%; }
 
 /* ---------- 空间条（标题大、同步靠最右、邀请码一行显示） ---------- */
 .space-chip { display: flex; align-items: center; gap: 10px; margin: 0 12px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 7px 12px; box-shadow: 0 1px 3px rgba(0,0,0,.05); flex: 0 0 auto; }
@@ -171,21 +177,29 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .ag-new { width: 100%; text-align: left; }
 
 /* ---------- 日 / 周视图时间轴 ---------- */
-.calendar.tgrid { overflow: visible; padding: 0; }
-.tg-head { display: grid; position: sticky; top: 0; z-index: 6; background: var(--card); border-bottom: 1px solid var(--line); border-radius: 13px 13px 0 0; }
-.tg-corner { display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 4px 4px 0; font-size: 10px; color: var(--weak2); }
+/* 时间轴自己做滚动容器：纵向滚 24 小时（表头吸顶），横向滑过七天（小时列吸左） */
+.calendar.tgrid { overflow: auto; padding: 0; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; scrollbar-width: thin; }
+/* 手机上七天平分每格放不下标题，改成一次看五天、左右滑动看满七天 */
+@media (max-width: 599px) { :root { --tg-colw: calc((100vw - var(--tg-gutter) - 26px)/5); } }
+/* 三层（表头/全天/正文）必须等宽且同宽于轨道总宽，否则横向滑动时列会错开 */
+.tg-head, .tg-allday, .tg-body {
+  width: calc(var(--tg-gutter) + var(--tg-n, 7) * var(--tg-colw)); min-width: 100%;
+}
+.tg-head { display: grid; position: sticky; top: 0; z-index: 6; background: var(--card); border-bottom: 1px solid var(--line); }
+.tg-corner { display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 4px 4px 0; font-size: 10px; color: var(--weak2); position: sticky; left: 0; z-index: 8; background: var(--card); }
 .tg-hcell { text-align: center; padding: 6px 0 5px; font-size: 12px; color: var(--text-weak); border-left: 1px solid var(--line); cursor: pointer; }
 .tg-hcell.sun { color: var(--accent); } .tg-hcell.sat { color: var(--sat); }
 .tg-hcell .dnum { display: inline-block; min-width: 24px; font-size: 16px; font-weight: 600; color: var(--text); border-radius: 12px; padding: 1px 4px; }
 .tg-hcell.today .dnum { background: var(--accent); color: #fff; }
 .tg-allday { display: grid; border-bottom: 1px solid var(--line); }
-.tg-adlabel { font-size: 10.5px; color: var(--weak2); text-align: right; padding: 6px 4px 0 0; }
+.tg-adlabel { font-size: 10.5px; color: var(--weak2); text-align: right; padding: 6px 4px 0 0; position: sticky; left: 0; z-index: 7; background: var(--card); }
 .tg-adcell { border-left: 1px solid var(--line); padding: 3px; display: flex; flex-direction: column; gap: 3px; min-height: 26px; }
 .ad-chip { border-radius: 4px; color: #fff; padding: 2px 5px; font-size: 11px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tg-body { display: flex; align-items: stretch; }
-.tg-hours { flex: 0 0 var(--tg-gutter, 40px); }
+.tg-body { display: flex; align-items: stretch; padding-bottom: 56px; }
+/* 小时列吸在左边，横向滑动时也知道现在看的是几点 */
+.tg-hours { flex: 0 0 var(--tg-gutter); position: sticky; left: 0; z-index: 5; background: var(--card); }
 .tg-hour { height: var(--hour-h, 46px); font-size: 10.5px; color: var(--weak2); text-align: right; padding-right: 5px; }
-.tg-cols { flex: 1 1 auto; display: grid; position: relative; }
+.tg-cols { flex: 1 1 auto; min-width: 0; display: grid; position: relative; }
 .tg-col { position: relative; border-left: 1px solid var(--line); min-height: calc(var(--hour-h, 46px) * 24); background-image: repeating-linear-gradient(to bottom, var(--line) 0 1px, transparent 1px var(--hour-h, 46px)); }
 .tg-col.today { background-color: var(--accent-soft); }
 .tg-ev { position: absolute; border-radius: 6px; color: #fff; font-size: 11px; line-height: 1.3; padding: 2px 4px; overflow: hidden; border-left: 3px solid; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.14); word-break: break-all; }
@@ -261,19 +275,29 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .toast { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%); background: rgba(24,26,32,.88); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: #fff; padding: 11px 18px; border-radius: 16px; font-size: 14px; z-index: 99; opacity: 0; transition: opacity .25s; pointer-events: none; max-width: 80vw; text-align: center; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
 .toast.show { opacity: 1; }
 
-/* ---------- 宽屏 / 横屏：月视图格子与当日列表左右分栏 ---------- */
+/* ---------- 宽屏 / 平板：月视图左格子右日程卡，两栏顶对齐 ---------- */
 @media (min-width: 600px) {
-  .screen { max-width: 680px; margin: 0 auto; }
+  .screen { max-width: 900px; margin: 0 auto; }
   .calendar, .people-bar, .space-chip, .view-seg, .week-header { margin-left: 0; margin-right: 0; }
   .cal-main { padding: 0 16px calc(96px + var(--sa-bottom)); }
-  .cal-main.with-agenda { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr); gap: 4px 22px; align-items: start; }
-  .cal-main.with-agenda > .week-header, .cal-main.with-agenda > #calendar { grid-column: 1; }
-  .cal-main.with-agenda > #agenda { grid-column: 2; grid-row: 1 / -1; margin: 4px 0 0; }
+  /* 必须显式给出行：没有 grid-template-rows 时 grid-row:1/-1 的 -1 只落到第 1 根线，
+     日程卡会自己撑出第一行、把左边的月历整块顶下去，就是平板上看到的左右错位 */
+  .cal-main.with-agenda { display: grid; grid-template-columns: minmax(0,1.35fr) minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); gap: 4px 22px; }
+  .cal-main.with-agenda > .week-header { grid-column: 1; grid-row: 1; }
+  .cal-main.with-agenda > #calendar { grid-column: 1; grid-row: 2; min-height: 0; }
+  .cal-main.with-agenda > #agenda { grid-column: 2; grid-row: 1 / span 2; min-height: 0; overflow-y: auto; margin: 4px 0 0; }
+  /* 格子按可用高度自适应，六行铺满而不是固定 48px */
+  .calendar.month { grid-auto-rows: minmax(34px,1fr); }
+  .calendar.month .cell { padding: 5px 4px 6px; gap: 4px; }
+  .calendar.month .date-num { width: 28px; height: 28px; font-size: 15px; }
+  .calendar.month .mdot { width: 9px; height: 9px; }
+  .calendar.month .dots { max-height: 26px; gap: 3px; }
   .modal-mask { align-items: center; padding: 18px; }
   .modal { border-radius: 26px; max-width: 420px; padding-bottom: 22px; box-shadow: 0 16px 48px rgba(0,0,0,.18); animation: popIn .25s cubic-bezier(.25,.85,.3,1); }
   .modal::before { display: none; }
   .tabbar .tab { min-width: 128px; }
 }
+@media (min-width: 1000px) { .screen { max-width: 1120px; } }
 @keyframes popIn { from { opacity: 0; transform: scale(.95) translateY(10px); } }
 
 /* ---------- 导入弹窗增强 ---------- */

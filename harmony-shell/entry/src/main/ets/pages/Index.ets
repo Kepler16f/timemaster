@@ -8,6 +8,8 @@ struct Index {
   @State diag: string = '';
   @StorageProp('saTopPx') @Watch('pushInsets') saTopPx: number = 0;
   @StorageProp('saBottomPx') @Watch('pushInsets') saBottomPx: number = 0;
+  /* 网页主题切到深色时，Web 组件自身底色也要跟上，否则旋转/缩放时会露出白边 */
+  @StorageProp('uiDark') uiDark: boolean = false;
   private proxyOk: boolean = false;
   private reloadTries: number = 0;
   private pageReady: boolean = false;
@@ -68,6 +70,10 @@ struct Index {
         .javaScriptAccess(true)
         .fileAccess(true)
         .zoomAccess(false)
+        /* 默认 Off：网页里的 prefers-color-scheme 永远报浅色，「跟随系统」就形同虚设。
+           Auto 让内核按系统深色模式给网页喂 prefers-color-scheme */
+        .darkMode(WebDarkMode.Auto)
+        .backgroundColor(this.uiDark ? '#111318' : '#F5F6F8')
         .onControllerAttached(() => { this.attachBridge(); })
         .onPageEnd(() => { this.reloading = false; this.pageReady = true; this.pushInsets(); this.selfCheck(); })
         .onErrorReceive((event) => {

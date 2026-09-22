@@ -72,6 +72,8 @@ export class HarmonyNative {
       return;
     }
     const color: string = dark === '1' ? '#FFFFFF' : '#1A1A1A';
+    /* 顺手把深色状态广播给页面，Web 组件底色跟着换（Index.ets 用 @StorageProp 读） */
+    AppStorage.setOrCreate('uiDark', dark === '1');
     window.getLastWindow(ctx).then((win: window.Window) => {
       const props: window.SystemBarProperties = { statusBarContentColor: color };
       return win.setWindowSystemBarProperties(props);

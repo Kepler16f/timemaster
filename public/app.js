@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.1';
 const VIEW_KEY = 'tm:view';
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
@@ -93,6 +93,8 @@ $('#themeSeg').onclick = (e) => {
   applyTheme();
 };
 if (darkMQ.addEventListener) darkMQ.addEventListener('change', () => { if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme(); });
+/* 鸿蒙 ArkWeb 里系统深色模式在应用切回前台时才保证同步过来，媒体查询事件不一定触发 */
+document.addEventListener('visibilitychange', () => { if (!document.hidden) applyTheme(); });
 
 function pad(n){ return String(n).padStart(2,'0'); }
 function dateStr(y,m,d){ return `${y}-${pad(m)}-${pad(d)}`; }
@@ -598,6 +600,7 @@ function renderCalendar(fresh){
   document.querySelectorAll('#viewSeg .seg-btn').forEach((b)=>b.classList.toggle('active', b.dataset.val===state.view));
   cal.innerHTML=''; ag.innerHTML='';
   $('#calMain').classList.toggle('with-agenda', state.view==='month');
+  $('#calMain').classList.toggle('tgrid-mode', state.view!=='month');
   $('#addBtn').hidden = state.view==='month'; // 月视图用列表底部的「新建日程」，悬浮按钮不再压住内容
   if(state.view==='month'){
     $('#weekHeader').hidden=false;
@@ -718,7 +721,11 @@ function evCard(data, e, ds){
 /* ---------- 日 / 周视图：时间轴网格，重叠日程分栏，当前时间红线 ---------- */
 function renderTimeGrid(data, cal, days, fresh){
   cal.className='calendar tgrid';
-  const tpl=`var(--tg-gutter,40px) repeat(${days.length},minmax(0,1fr))`;
+  /* 列宽走 --tg-colw：手机上算成「一屏五格」，多出的两格横向滑出来。
+     --tg-n 同时喂给 CSS 的总宽 calc()，三层（表头/全天/正文）才不会滑着滑着错开 */
+  cal.style.setProperty('--tg-n', String(days.length));
+  const colw=`minmax(var(--tg-colw,0px),1fr)`;
+  const tpl=`var(--tg-gutter,40px) repeat(${days.length},${colw})`;
   const tStr=todayStr();
 
   const head=el('div','tg-head'); head.style.gridTemplateColumns=tpl;
@@ -754,7 +761,7 @@ function renderTimeGrid(data, cal, days, fresh){
   const hours=el('div','tg-hours');
   for(let h=0;h<24;h++) hours.appendChild(el('div','tg-hour',pad(h)+':00'));
   body.appendChild(hours);
-  const cols=el('div','tg-cols'); cols.style.gridTemplateColumns=`repeat(${days.length},minmax(0,1fr))`;
+  const cols=el('div','tg-cols'); cols.style.gridTemplateColumns=`repeat(${days.length},${colw})`;
   days.forEach((ds)=>{
     const {evs}=splitMarks(byDay[ds]||[]);
     const col=el('div','tg-col'+(ds===tStr?' today':''));
@@ -773,7 +780,10 @@ function renderTimeGrid(data, cal, days, fresh){
 
   if(fresh){
     const hh=(cal.querySelector('.tg-hour')||{offsetHeight:46}).offsetHeight||46;
-    $('#calMain').scrollTop=Math.max(0, (new Date().getHours()-1)*hh);
+    const top=Math.max(0, (new Date().getHours()-1)*hh);
+    /* 现在滚动条在时间轴自己身上；顺带清掉外层旧的滚动位置 */
+    $('#calMain').scrollTop=top; cal.scrollTop=top;
+    cal.scrollLeft=0;
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "timemaster",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Reunion — 多人共享日程（Android APK / HarmonyOS NEXT HAP · 坚果云 WebDAV 同步）",
   "scripts": {
