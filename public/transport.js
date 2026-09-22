@@ -3,7 +3,11 @@
   'use strict';
 
   const cap = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.NativeHttp) || null;
-  const har = (window.__HarmonyNative && typeof window.__HarmonyNative.httpRequest === 'function') ? window.__HarmonyNative : null;
+  /* 鸿蒙桥必须在每次调用时取：ArkWeb 的 javaScriptProxy 可能晚于本脚本才注入 */
+  function harmony() {
+    const o = window.__HarmonyNative;
+    return (o && typeof o.httpRequest === 'function') ? o : null;
+  }
 
   function b64ToText(b64) {
     const bin = atob(b64.replace(/\s/g, ''));
@@ -31,7 +35,9 @@
     return new Promise((resolve, reject) => {
       const id = 'c' + (++seq);
       pending[id] = { resolve, reject };
-      try { har[method].apply(har, [id].concat(args || [])); }
+      const h = harmony();
+      if (!h) { delete pending[id]; reject(new Error('原生桥不可用')); return; }
+      try { h[method].apply(h, [id].concat(args || [])); }
       catch (e) { delete pending[id]; reject(e); }
     });
   }
@@ -42,6 +48,7 @@
    */
   async function request({ method = 'GET', url, headers = {}, body = null }) {
     let r;
+    const har = harmony();
     if (cap) r = await cap.request({ method, url, headers, body });
     else if (har) r = await harmonyCall('httpRequest', [JSON.stringify({ method, url, headers, body })]);
     else {
@@ -58,5 +65,9 @@
     return 'Basic ' + textToB64(user + ':' + pass);
   }
 
-  window.Transport = { request, basicAuth, isNative: !!(cap || har), hasHarmony: !!har, harmonyCall };
+  window.Transport = {
+    request, basicAuth, harmonyCall,
+    get isNative() { return !!(cap || harmony()); },
+    get hasHarmony() { return !!harmony(); },
+  };
 })();

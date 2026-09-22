@@ -7,6 +7,7 @@ struct Index {
   controller: webview.WebviewController = new webview.WebviewController();
   @State diag: string = '';
   private proxyOk: boolean = false;
+  private reloadTries: number = 0;
 
   private attachBridge(): void {
     try {
@@ -20,17 +21,25 @@ struct Index {
     }
   }
 
-  /* 页面加载完成后自检：桥是否真的注入到了 window，网页脚本有没有跑起来 */
+  /* 页面加载完成后自检：桥是否真的注入到了 window。首屏常在注册之前就开始加载，
+     所以探测不到时重载一次（registerJavaScriptProxy 只对注册之后开始的加载生效） */
   private selfCheck(): void {
     if (!this.proxyOk) return;
     this.controller.runJavaScript(
-      '(function(){return typeof window.__HarmonyNative + "|" + (document.getElementById("app")?document.getElementById("app").childElementCount:-1);})()'
+      '(function(){var o=window.__HarmonyNative;return (o&&typeof o.httpRequest==="function")?"ok":"missing:"+(typeof o);})()'
     ).then((v: string) => {
-      const parts = v.split('|');
-      if (parts[0] !== 'object') { this.diag = '桥未注入 window（当前 ' + v + '）'; return; }
-      if (parts[1] === '-1') { this.diag = '页面缺少 #app 容器：' + v; return; }
-      if (Number(parts[1]) === 0) { this.diag = '页面已加载但脚本未渲染内容（' + v + '）'; return; }
-      this.diag = '';
+      if (v === 'ok') {
+        if (this.diag !== '') { this.diag = ''; }
+        return;
+      }
+      if (this.reloadTries < 2) {
+        this.reloadTries += 1;
+        this.diag = '桥未注入，正在重载重试（' + this.reloadTries + '/2）…';
+        this.attachBridge();
+        try { this.controller.refresh(); } catch (e) { this.diag = '重载失败：' + e.message; }
+        return;
+      }
+      this.diag = '桥未注入 window（' + v + '），网盘同步与系统日历不可用';
     }).catch((e: Error) => { this.diag = '自检失败：' + e.message; });
   }
 

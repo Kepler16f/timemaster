@@ -154,6 +154,7 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .tabbar .tab svg { width: 22px; height: 22px; }
 .tabbar .tab.active { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
 .tabbar .tab:active { transform: scale(.95); }
+.tabbar.kb-hide { display: none; }
 
 /* ---------- 弹窗（移动端底部弹层风格） ---------- */
 .modal-mask {
@@ -226,6 +227,10 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .set-note { font-size: 12px; color: var(--text-weak); line-height: 1.65; }
 .set-actions { display: flex; gap: 14px; }
 .set-actions .big-btn { flex: 1; }
+/* 同一组内输入框与按钮常是兄弟节点，容器非 flex 时 gap 不生效，这里显式拉开 */
+.set-group .set-field + .set-actions,
+.set-group .set-actions + .set-field,
+.set-group .set-row + .set-actions { margin-top: 12px; }
 .auth-card .big-btn { margin-bottom: 12px; }
 .auth-card #lastSpaceBox { margin-bottom: 0; }
 .batch-list { max-height: 44vh; overflow: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 6px; }

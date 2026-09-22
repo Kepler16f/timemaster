@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 
 function getClientId() {
   let id = localStorage.getItem('tm:clientId');
@@ -76,6 +76,11 @@ function showScreen(name){
 }
 $('#tabRoom').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
 $('#tabSettings').onclick=openSettings;
+
+/* 键盘弹出时收起底栏：底栏是 fixed 定位，adjustResize 下会顶在键盘上方 */
+const isEditable=(el)=>!!el&&(el.tagName==='INPUT'||el.tagName==='TEXTAREA')&&!el.readOnly;
+document.addEventListener('focusin',(e)=>{ if(isEditable(e.target)) $('#tabbar').classList.add('kb-hide'); });
+document.addEventListener('focusout',()=>{ setTimeout(()=>{ if(!isEditable(document.activeElement)) $('#tabbar').classList.remove('kb-hide'); },150); });
 
 /* ---------- 资料（起始屏与设置页共用一份状态，双向刷新） ---------- */
 function buildColorPicker(box){
