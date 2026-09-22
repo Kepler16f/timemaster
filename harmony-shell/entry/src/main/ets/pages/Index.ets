@@ -47,7 +47,7 @@ struct Index {
         .onPageEnd(() => { this.selfCheck(); })
         .onErrorReceive((event) => {
           if (event !== undefined && event.request.isMainFrame()) {
-            this.diag = '页面加载失败 ' + event.request.getErrorCode() + '：' + event.request.getErrorInfo();
+            this.diag = '页面加载失败 ' + event.error.getErrorCode() + '：' + event.error.getErrorInfo();
           }
         })
         .onRenderExited((event) => {
