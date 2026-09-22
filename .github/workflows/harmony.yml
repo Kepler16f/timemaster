@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'harmony-shell/**'
+      - 'public/**'
       - 'scripts/sync-harmony-web.mjs'
       - '.github/workflows/harmony.yml'
 
