@@ -43,7 +43,12 @@ jobs:
           echo "$RUNNER_TEMP/clt/tool/node/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/clt/tool/hvigor/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/clt/tool/ohpm/bin"   >> "$GITHUB_PATH"
-          echo "DEVECO_SDK_HOME=$RUNNER_TEMP/clt/sdk" >> "$GITHUB_ENV"
+          # DEVECO_SDK_HOME 必须指向包含 default/ 的 sdk 根；不同代际归档层级有别，自动定位
+          echo "--- toolchain tree (depth 3) ---"
+          find "$RUNNER_TEMP/clt" -maxdepth 3 -type d | sort | head -80
+          DEF=$(find "$RUNNER_TEMP/clt" -maxdepth 6 -type d -name default | head -1)
+          SDKROOT=$( [ -n "$DEF" ] && dirname "$DEF" || echo "$RUNNER_TEMP/clt/sdk" )
+          echo "DEVECO_SDK_HOME=$SDKROOT" >> "$GITHUB_ENV"
           echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> "$HOME/.npmrc"
 
       - name: Sync web assets into rawfile
