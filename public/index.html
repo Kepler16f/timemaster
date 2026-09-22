@@ -43,7 +43,7 @@
     <header class="topbar">
       <div class="title-group">
         <button id="todayBtn" class="today-btn">今天</button>
-        <h1 id="monthTitle">2026年9月</h1>
+        <h1 id="monthTitle" class="cal-title">2026年9月</h1>
       </div>
       <div class="nav-group">
         <button id="prevBtn" class="nav-btn">‹</button>
@@ -53,12 +53,20 @@
     </header>
 
     <div class="space-chip" id="spaceChip">
-      <span id="spaceName">空间</span>
-      <button id="copyCode" class="code-btn">邀请码 <b id="codeText">--------</b> 复制</button>
+      <button id="spaceNameBtn" class="sc-main" title="快速切换空间">
+        <span class="sc-row"><span id="spaceName">空间</span><span class="caret">⌄</span></span>
+        <span id="syncState" class="sync-state"></span>
+      </button>
+      <button id="copyCode" class="code-btn">邀请码 <b id="codeText">--------</b> 点击复制</button>
       <button id="syncBtn" class="sync-btn" title="立即同步">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.6-5.7L20 8.5"/><path d="M20 12a8 8 0 0 1-13.6 5.7L4 15.5"/><polyline points="20 3.5 20 8.5 15 8.5"/><polyline points="4 20.5 4 15.5 9 15.5"/></svg>
       </button>
-      <span id="syncState" class="sync-state"></span>
+    </div>
+
+    <div class="seg view-seg" id="viewSeg">
+      <button type="button" class="seg-btn" data-val="month">月</button>
+      <button type="button" class="seg-btn" data-val="week">周</button>
+      <button type="button" class="seg-btn" data-val="day">日</button>
     </div>
 
     <div class="people-bar" id="peopleBar">
@@ -66,13 +74,14 @@
       <div class="people-tags" id="peopleTags"></div>
     </div>
 
-    <div class="week-header">
-      <div class="wh sun">日</div><div class="wh">一</div><div class="wh">二</div>
-      <div class="wh">三</div><div class="wh">四</div><div class="wh">五</div><div class="wh sat">六</div>
+    <div class="cal-main" id="calMain">
+      <div class="week-header" id="weekHeader">
+        <div class="wh sun">日</div><div class="wh">一</div><div class="wh">二</div>
+        <div class="wh">三</div><div class="wh">四</div><div class="wh">五</div><div class="wh sat">六</div>
+      </div>
+      <div class="calendar" id="calendar"></div>
+      <div id="agenda"></div>
     </div>
-
-    <div class="calendar" id="calendar"></div>
-    <p class="tip">同格内不同颜色的色块 = 不同成员的日程。只有创建者可以删除自己的日程。</p>
 
     <button class="fab" id="addBtn">＋</button>
   </section>
@@ -174,14 +183,16 @@
 
       <div class="set-group">
         <div class="set-title">关于</div>
-        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.1.5</span></div>
-        <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
-        <div class="set-actions">
-          <button class="big-btn ghost" id="updCheckBtn">🔄 检查更新</button>
-          <button class="big-btn hidden" id="updDlBtn">⬇ 后台下载新版</button>
-          <button class="big-btn hidden" id="updInstallBtn">📲 立即安装</button>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.0</span></div>
+        <div id="updGroup" hidden style="display:flex;flex-direction:column;gap:14px">
+          <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
+          <div class="set-actions">
+            <button class="big-btn ghost" id="updCheckBtn">🔄 检查更新</button>
+            <button class="big-btn hidden" id="updDlBtn">⬇ 后台下载新版</button>
+            <button class="big-btn hidden" id="updInstallBtn">📲 立即安装</button>
+          </div>
+          <p class="set-note" id="updNote" hidden></p>
         </div>
-        <p class="set-note" id="updNote" hidden></p>
         <p class="set-note">Reunion · 数据经由你自己的网盘同步，无第三方服务器。</p>
       </div>
 
@@ -193,7 +204,10 @@
     <div class="modal">
       <h3>切换空间</h3>
       <div id="switchList" class="space-list"></div>
-      <button class="big-btn ghost" id="swJoin">🔑 用邀请码加入新空间</button>
+      <div class="set-actions">
+        <button class="big-btn ghost" id="swCreate">＋ 新建空间</button>
+        <button class="big-btn ghost" id="swJoin">🔑 邀请码加入</button>
+      </div>
       <div class="modal-actions">
         <button id="swSettings" class="action-btn">⚙ 设置</button>
         <button id="swHome" class="action-btn">↩ 返回</button>
@@ -276,6 +290,7 @@
           <option value="yearly">每年</option>
         </select>
       </label>
+      <label>地点<input type="text" id="evLocation" placeholder="可选，例如 图书馆三楼" /></label>
       <label>备注<input type="text" id="evDesc" placeholder="可选" /></label>
       <div class="modal-actions">
         <button id="eventCancel" class="action-btn">取消</button>
@@ -381,7 +396,7 @@
   <nav class="tabbar hidden" id="tabbar">
     <button class="tab" data-tab="room" id="tabRoom">
       <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4.5" width="18" height="16.5" rx="3.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
-      <span>房间</span>
+      <span>空间</span>
     </button>
     <button class="tab" data-tab="settings" id="tabSettings">
       <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51.97z"/></svg>

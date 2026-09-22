@@ -3,6 +3,40 @@ import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 
 const TM_PREFIX = 'TimeMaster:';
 const DAY_MS = 86400000;
+/* CalendarKit 的 napi 层按字面量取键名，用数字常量避开不同 SDK 版本枚举名差异 */
+const EVENT_TYPE_NORMAL = 0;
+const CALENDAR_TYPE_LOCAL = 0;
+
+interface BizErr {
+  message?: string;
+  code?: number;
+}
+
+function errText(e: Object): string {
+  const b: BizErr = e as Object as BizErr;
+  const code: string = b.code === undefined ? '' : '[' + String(b.code) + '] ';
+  return code + (b.message ? b.message : String(e));
+}
+
+/* CalendarKit 抛出的原生错误只有 "invalid arg[0]" 这类笼统措辞，
+   不标注调用点就没法定位是读、删还是写出的问题 */
+async function labeled<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    throw new Error(label + '失败：' + errText(e as Object));
+  }
+}
+
+function timeFilter(fromMs: number, toMs: number): calendarManager.EventFilter {
+  const range: Record<string, Object> = { 'startTime': fromMs, 'endTime': toMs };
+  const filter: Record<string, Object> = { 'timeRange': range, 'calendarType': CALENDAR_TYPE_LOCAL };
+  return filter as Object as calendarManager.EventFilter;
+}
+
+interface LocShape {
+  location?: string;
+}
 
 interface EvShape {
   id?: number;
@@ -11,7 +45,7 @@ interface EvShape {
   startTime?: number;
   endTime?: number;
   description?: string;
-  location?: string;
+  location?: LocShape;
 }
 
 interface WireEv {
@@ -66,9 +100,29 @@ function fromLocal(dateStr: string, hm: string): number {
   return d.getTime();
 }
 
+/* 事件对象按键名逐个拼：空 location 之类的多余字段是 CalendarKit 参数校验的常见雷区 */
+function buildEvent(title: string, w: WireEv, marker: string, startMs: number, endMs: number): calendarManager.Event {
+  const ev: Record<string, Object> = {
+    'title': title,
+    'type': EVENT_TYPE_NORMAL,
+    'startTime': startMs,
+    'endTime': endMs,
+    'description': marker + '|' + (w.desc || ''),
+  };
+  if (w.allDay) {
+    ev['isAllDay'] = true;
+  }
+  const loc: string = w.location || '';
+  if (loc.length > 0) {
+    const l: Record<string, Object> = { 'location': loc };
+    ev['location'] = l;
+  }
+  return ev as Object as calendarManager.Event;
+}
+
 function getCal(ctx: common.UIAbilityContext): Promise<calendarManager.Calendar> {
   const mgr = calendarManager.getCalendarManager(ctx);
-  return mgr.getCalendar();
+  return labeled('获取日历实例', () => mgr.getCalendar());
 }
 
 export class HarmonyCalendar {
@@ -90,8 +144,7 @@ export class HarmonyCalendar {
       throw new Error('上下文未就绪');
     }
     const cal = await getCal(ctx);
-    const filter: calendarManager.EventFilter = { timeRange: { startTime: fromMs, endTime: toMs } };
-    const list = await cal.getEvents(filter);
+    const list = await labeled('读取系统日程', () => cal.getEvents(timeFilter(fromMs, toMs)));
     const out: OutEv[] = [];
     for (const raw of list) {
       const e = raw as Object as EvShape;
@@ -115,7 +168,7 @@ export class HarmonyCalendar {
         start: allDay ? '' : toHmStr(st),
         end: allDay ? '' : toHmStr(en),
         desc: desc,
-        location: e.location || '',
+        location: e.location?.location || '',
         sourceUid: 'hos:' + String(e.id),
       };
       if (allDay && dur > DAY_MS + 1000) {
@@ -134,61 +187,76 @@ export class HarmonyCalendar {
     const list: WireEv[] = payload.events || [];
     const cal = await getCal(ctx);
     const now = Date.now();
-    const filter: calendarManager.EventFilter = { timeRange: { startTime: now - 750 * DAY_MS, endTime: now + 750 * DAY_MS } };
-    const existing = await cal.getEvents(filter);
-    const mine: calendarManager.Event[] = [];
+    const existing = await labeled('读取本应用已有日程',
+      () => cal.getEvents(timeFilter(now - 750 * DAY_MS, now + 750 * DAY_MS)));
+
+    /* 只认自己写过的那批（description 以 TimeMaster: 开头），别人的日程一律不动 */
+    const mine: EvShape[] = [];
     for (const raw of existing) {
       const e = raw as Object as EvShape;
-      if ((e.description || '').startsWith(TM_PREFIX) && e.id !== undefined) {
-        mine.push(raw);
+      if ((e.description || '').startsWith(TM_PREFIX) && typeof e.id === 'number') {
+        mine.push(e);
       }
     }
     const wanted = new Set<string>();
     for (const w of list) {
       wanted.add(TM_PREFIX + (w.id || ''));
     }
+
+    const fails: string[] = [];
     let removed = 0;
     for (const m of mine) {
-      const shape = m as Object as EvShape;
-      const marker = (shape.description || '').split('|')[0];
-      if (!wanted.has(marker) && m.id !== undefined) {
-        await cal.deleteEvent(m.id);
+      const marker: string = (m.description || '').split('|')[0];
+      if (wanted.has(marker) || typeof m.id !== 'number') {
+        continue;
+      }
+      const staleId: number = m.id;
+      try {
+        await labeled('清理旧日程', () => cal.deleteEvent(staleId));
         removed++;
+      } catch (e) {
+        fails.push(errText(e as Object));
       }
     }
+
     let upserted = 0;
     for (const w of list) {
-      const marker = TM_PREFIX + (w.id || '');
-      for (const m of mine) {
-        const shape = m as Object as EvShape;
-        if ((shape.description || '').split('|')[0] === marker && m.id !== undefined) {
-          await cal.deleteEvent(m.id);
-        }
+      const marker: string = TM_PREFIX + (w.id || '');
+      const title: string = w.title || '未命名';
+      const startMs = w.allDay
+        ? fromLocal(w.date || toDateStr(now), '00:00')
+        : fromLocal(w.date || toDateStr(now), w.start || '00:00');
+      let endMs = w.allDay
+        ? (w.endDate ? fromLocal(w.endDate, '00:00') + DAY_MS - 1000 : startMs + DAY_MS - 1000)
+        : (w.end ? fromLocal(w.date || toDateStr(now), w.end) : startMs + 3600000);
+      if (endMs <= startMs) {
+        endMs += DAY_MS;
       }
-      let startMs: number;
-      let endMs: number;
-      if (w.allDay) {
-        startMs = fromLocal(w.date || toDateStr(now), '00:00');
-        endMs = w.endDate ? fromLocal(w.endDate, '00:00') + DAY_MS - 1000 : startMs + DAY_MS - 1000;
-      } else {
-        startMs = fromLocal(w.date || toDateStr(now), w.start || '00:00');
-        endMs = w.end ? fromLocal(w.date || toDateStr(now), w.end) : startMs + 3600000;
-        if (endMs <= startMs) {
-          endMs += DAY_MS;
+      try {
+        await labeled('写入「' + title + '」', () => cal.addEvent(buildEvent(title, w, marker, startMs, endMs)));
+        upserted++;
+        /* 先写后删：中途失败时旧条目还在，不会两头落空 */
+        for (const m of mine) {
+          if ((m.description || '').split('|')[0] === marker && typeof m.id === 'number') {
+            const oldId: number = m.id;
+            try {
+              await labeled('替换旧日程', () => cal.deleteEvent(oldId));
+              removed++;
+            } catch (e) {
+              fails.push(errText(e as Object));
+            }
+          }
         }
+      } catch (e) {
+        fails.push(errText(e as Object));
       }
-      const ev: calendarManager.Event = {
-        title: w.title || '未命名',
-        type: calendarManager.EventType.NORMAL,
-        startTime: startMs,
-        endTime: endMs,
-        description: marker + '|' + (w.desc || ''),
-        location: { location: w.location || '' },
-      };
-      await cal.addEvent(ev);
-      upserted++;
     }
-    return JSON.stringify({ upserted: upserted, removed: removed });
+    return JSON.stringify({
+      upserted: upserted,
+      removed: removed,
+      failed: fails.length,
+      error: fails.length > 0 ? fails[0] : '',
+    });
   }
 
   static async openSettings(ctx: common.UIAbilityContext | null): Promise<void> {

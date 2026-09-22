@@ -2,7 +2,8 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.1.5';
+const APP_VERSION = '0.2.0';
+const VIEW_KEY = 'tm:view';
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
 window.__setSafeInsets = function (topPx, bottomPx) {
@@ -57,9 +58,10 @@ async function adoptNativeDeviceId(tries){
 }
 const state = {
   code: null,
-  prevCode: null,
+  day: todayStr(),
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
+  view: localStorage.getItem(VIEW_KEY) || 'month',
   visible: {},
   spaceMode: 'create',
   pollTimer: null,
@@ -337,6 +339,8 @@ function spaceItems(listEl, onClick){
       </div>`;
     if(onClick) item.onclick=()=>onClick(s);
     else {
+      /* 整张卡片可点：新建/加入空间后在设置里点一下就切过去 */
+      item.onclick=()=>{ if(s.code!==state.code && needDav()) enterSpace(s.code); };
       const enter=document.createElement('button'); enter.className='si-btn'; enter.textContent='进入';
       enter.onclick=(ev2)=>{ ev2.stopPropagation(); if(needDav()) enterSpace(s.code); };
       const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
@@ -377,14 +381,21 @@ $('#renameSave').onclick=()=>{
     toast('空间已改名，稍后自动同步给成员');
   } else toast('只有创建者可以修改空间名称');
 };
-$('#switchSpaceBtn').onclick=()=>{ spaceItems($('#switchList'), (s)=>{ $('#switchModal').hidden=true; enterSpace(s.code); }); $('#switchModal').hidden=false; };
+/* ---------- 快速切换空间（顶栏标题 ☰ 与标题栏点击共用） ---------- */
+function openSwitchModal(){
+  spaceItems($('#switchList'), (s)=>{ $('#switchModal').hidden=true; enterSpace(s.code); });
+  $('#switchModal').hidden=false;
+}
+$('#switchSpaceBtn').onclick=openSwitchModal;
+$('#spaceNameBtn').onclick=openSwitchModal;
 $('#swSettings').onclick=()=>{ $('#switchModal').hidden=true; openSettings(); };
 $('#swHome').onclick=()=>{
   $('#switchModal').hidden=true;
-  const prev=state.prevCode || localStorage.getItem('tm:prevSpace');
-  if(prev && prev!==state.code && Store.listSpaces().some(s=>s.code===prev) && needDav()){ enterSpace(prev); }
-  else { state.code=null; state.prevCode=null; initStart(); }
+  const prev=histBack(); // 「返回」= 回到上一个进入过的空间
+  if(prev) enterSpace(prev);
+  else { state.code=null; initStart(); }
 };
+$('#swCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#swJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 $('#mgmtCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#mgmtJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
@@ -466,18 +477,32 @@ $('#clearOk').onclick=async()=>{
 };
 
 /* ---------- 进入空间 ---------- */
+const HIST_KEY='tm:spaceHist';
+function histPush(code){
+  const h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
+  if(h[h.length-1]!==code) h.push(code);
+  localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(-12)));
+}
+function histBack(){
+  const h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
+  if(h.length<2) return null;
+  h.pop(); localStorage.setItem(HIST_KEY, JSON.stringify(h));
+  const spaces=Store.listSpaces();
+  while(h.length && !spaces.some((s)=>s.code===h[h.length-1])) h.pop(); // 已移除的空间跳过
+  localStorage.setItem(HIST_KEY, JSON.stringify(h));
+  return h[h.length-1]||null;
+}
 async function enterSpace(code){
-  if(state.code && state.code!==code){
-    state.prevCode=state.code;
-    localStorage.setItem('tm:prevSpace', state.code);
-  }
+  histPush(code);
   state.code=code;
+  localStorage.setItem('tm:lastSpace', code); // 下次冷启动直接回到这个空间
+  state.day=todayStr(); syncYm();
   const data = Store.get(code) || (await Store.openRemote(code)).data;
   await Store.attach(code, data);
   Store.dedupe(code);
   $('#spaceName').textContent=data.name||'共享日程';
   $('#codeText').textContent=code;
-  renderPeopleTags(); renderCalendar(); updateSyncChip();
+  renderPeopleTags(); renderCalendar(true); updateSyncChip();
   showScreen('calendarScreen');
   Store.syncCode(code);
   startPolling();
@@ -527,72 +552,280 @@ function renderPeopleTags(){
   });
 }
 
-/* ---------- 月视图（渲染期按 RRULE 展开，数据里只存规则） ---------- */
+/* ---------- 视图引擎：月（成员色块 + 当日日程卡列表）/ 周 / 日时间轴 ---------- */
 const REPEAT_ZH = { DAILY:'每天', WEEKLY:'每周', MONTHLY:'每月', YEARLY:'每年' };
-function renderCalendar(){
-  const data=Store.get(state.code); if(!data) return;
-  $('#monthTitle').textContent=`${state.year}年${state.month}月`;
-  const cal=$('#calendar'); cal.innerHTML='';
-  const first=new Date(state.year,state.month-1,1);
-  const startWeekday=first.getDay();
-  const today=new Date();
-  const todayStr=dateStr(today.getFullYear(),today.getMonth()+1,today.getDate());
+const WD_ZH = ['周日','周一','周二','周三','周四','周五','周六'];
 
-  const winFrom=new Date(first); winFrom.setDate(winFrom.getDate()-startWeekday);
-  const winTo=new Date(winFrom); winTo.setDate(winTo.getDate()+41);
-  const fromStr=dateStr(winFrom.getFullYear(),winFrom.getMonth()+1,winFrom.getDate());
-  const toStr=dateStr(winTo.getFullYear(),winTo.getMonth()+1,winTo.getDate());
+function todayStr(){ const t=new Date(); return dateStr(t.getFullYear(),t.getMonth()+1,t.getDate()); }
+function shiftDay(ds,n){ const d=IcsParser.parseDate(ds); d.setDate(d.getDate()+n); return IcsParser.dstr(d); }
+function weekDays(ds){ /* 与月视图一致：周日为一周之始 */
+  const d=IcsParser.parseDate(ds); d.setDate(d.getDate()-d.getDay());
+  const list=[]; for(let i=0;i<7;i++){ list.push(IcsParser.dstr(d)); d.setDate(d.getDate()+1); }
+  return list;
+}
+function toMin(hm){ const p=String(hm||'').split(':'); return (+p[0]||0)*60+(+p[1]||0); }
+function isAllDay(e){ return !!e.allDay || !e.start; }
+function evStartMin(e){ return isAllDay(e)?0:toMin(e.start); }
+function evEndMin(e){
+  if(isAllDay(e)) return 1440;
+  const s=toMin(e.start);
+  if(!e.end) return Math.min(s+60,1440);
+  const en=toMin(e.end);
+  if(en>s) return Math.max(en,s+15);
+  return en<60 ? 1440 : Math.min(s+60,1440); // 跨零点的夜间日程画到当天末尾
+}
+function el(tag, cls, text){ const n=document.createElement(tag); if(cls) n.className=cls; if(text!=null) n.textContent=text; return n; }
+function sortByTime(a,b){ return (isAllDay(b)-isAllDay(a)) || String(a.start||'').localeCompare(String(b.start||'')) || String(a.title||'').localeCompare(String(b.title||'')); }
 
+/* 渲染期按 RRULE 展开，只统计可见成员 */
+function occurrences(data, fromStr, toStr){
   const byDay={};
   Object.keys(data.events).forEach(id=>{
     const ev=data.events[id];
     if(!memberOn(ev.ownerId) || !data.members[ev.ownerId]) return;
     IcsParser.expandOccurrences(ev, fromStr, toStr).forEach(ds=>{ (byDay[ds]=byDay[ds]||[]).push(ev); });
   });
+  return byDay;
+}
+function splitMarks(list){
+  return { marks:list.filter(e=>e.type==='work'||e.type==='rest'),
+           evs:list.filter(e=>e.type!=='work'&&e.type!=='rest').sort(sortByTime) };
+}
 
+function renderCalendar(fresh){
+  const data=Store.get(state.code); if(!data) return;
+  const cal=$('#calendar'), ag=$('#agenda');
+  document.querySelectorAll('#viewSeg .seg-btn').forEach((b)=>b.classList.toggle('active', b.dataset.val===state.view));
+  cal.innerHTML=''; ag.innerHTML='';
+  $('#calMain').classList.toggle('with-agenda', state.view==='month');
+  $('#addBtn').hidden = state.view==='month'; // 月视图用列表底部的「新建日程」，悬浮按钮不再压住内容
+  if(state.view==='month'){
+    $('#weekHeader').hidden=false;
+    cal.className='calendar month';
+    renderMonth(data, cal);
+    renderAgenda(data, ag);
+  }else{
+    $('#weekHeader').hidden=true;
+    renderTimeGrid(data, cal, state.view==='week'?weekDays(state.day):[state.day], fresh);
+  }
+  $('#monthTitle').textContent = state.view==='month'
+    ? `${state.year}年${state.month}月`
+    : (state.view==='week'
+        ? (()=>{ const a=IcsParser.parseDate(weekDays(state.day)[0]), b=IcsParser.parseDate(weekDays(state.day)[6]);
+                 return `${a.getMonth()+1}月${a.getDate()}日 – ${b.getMonth()+1}月${b.getDate()}日`; })()
+        : (()=>{ const d=IcsParser.parseDate(state.day); return `${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`; })());
+}
+
+/* ---------- 月视图：格子只放日期与成员色块，整月一屏 ---------- */
+function renderMonth(data, cal){
+  const first=new Date(state.year,state.month-1,1);
+  const winFrom=new Date(first); winFrom.setDate(winFrom.getDate()-winFrom.getDay());
+  const winTo=new Date(winFrom); winTo.setDate(winTo.getDate()+41);
+  const byDay=occurrences(data, IcsParser.dstr(winFrom), IcsParser.dstr(winTo));
+  const tStr=todayStr();
   for(let i=0;i<42;i++){
-    const cellDate=new Date(winFrom); cellDate.setDate(winFrom.getDate()+i);
-    const ds=dateStr(cellDate.getFullYear(),cellDate.getMonth()+1,cellDate.getDate());
-    const cell=document.createElement('div'); cell.className='cell';
-    if(cellDate.getMonth()!==state.month-1) cell.classList.add('other');
-    if(ds===todayStr) cell.classList.add('today');
-    const num=document.createElement('div'); num.className='date-num'; num.textContent=cellDate.getDate(); cell.appendChild(num);
-
-    let dayEvents=(byDay[ds]||[]).sort((a,b)=>(a.start||'').localeCompare(b.start||''));
-    const mark=dayEvents.find(e=>e.type==='work'||e.type==='rest');
-    if(mark){ const dm=document.createElement('div'); dm.className='daymark '+mark.type; dm.textContent=mark.type==='work'?'班':'休'; cell.appendChild(dm); }
-    dayEvents=dayEvents.filter(e=>e.type!=='work'&&e.type!=='rest');
-
-    if(dayEvents.length){
-      const box=document.createElement('div'); box.className='events';
-      dayEvents.forEach(e=>{
-        const chip=document.createElement('div'); chip.className='ev';
-        const color=data.members[e.ownerId].color;
-        chip.style.background=color; chip.style.borderLeftColor=shade(color,-25);
-        const time=(!e.allDay&&e.start)?`<span class="ev-time">${e.start}</span>`:'';
-        chip.innerHTML=`${time}${escapeHtml(e.title)}`;
-        chip.onclick=(ev2)=>{ ev2.stopPropagation(); openDetail(e, data); };
-        box.appendChild(chip);
-      });
-      cell.appendChild(box);
+    const cd=new Date(winFrom); cd.setDate(winFrom.getDate()+i);
+    const ds=IcsParser.dstr(cd);
+    const cell=el('div','cell'+(cd.getMonth()!==state.month-1?' other':'')+(ds===tStr?' today':'')+(ds===state.day?' sel':''));
+    cell.appendChild(el('div','date-num',String(cd.getDate())));
+    const {marks,evs}=splitMarks(byDay[ds]||[]);
+    if(marks.length){ const dm=el('div','daymark '+marks[0].type, marks[0].type==='work'?'班':'休'); cell.appendChild(dm); }
+    if(evs.length){
+      const colors=[]; const seen={};
+      evs.forEach((e)=>{ const c=data.members[e.ownerId].color; if(!seen[c]){ seen[c]=1; colors.push(c); } });
+      const dots=el('div','dots');
+      colors.slice(0,4).forEach((c)=>{ const d=el('span','mdot'); d.style.background=c; dots.appendChild(d); });
+      if(evs.length>4) dots.appendChild(el('span','mdot more','+'+(evs.length-4)));
+      cell.appendChild(dots);
     }
-    cell.onclick=()=>openEventModal(ds);
+    cell.onclick=()=>{ state.day=ds; syncYm(); renderCalendar(); };
     cal.appendChild(cell);
   }
 }
 
+/* ---------- 月视图下方：当日日程卡列表（进度条 + 按时间排列的详情） ---------- */
+function renderAgenda(data, box){
+  const ds=state.day, d=IcsParser.parseDate(ds);
+  const {marks,evs}=splitMarks(occurrences(data, ds, ds)[ds]||[]);
+  box.className='agenda';
+  const head=el('div','ag-head');
+  head.appendChild(el('div','ag-date',`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`));
+  head.appendChild(el('div','ag-sub', (marks.length?marks.length+' 个假勤 · ':'') + evs.length + ' 条日程'));
+  box.appendChild(head);
+
+  const tl=renderSpanBars(data, evs);
+  if(tl) box.appendChild(tl);
+
+  if(!marks.length && !evs.length) box.appendChild(el('p','ag-empty','这一天还没有日程。'));
+  marks.forEach((e)=>box.appendChild(evCard(data,e,ds)));
+  evs.forEach((e)=>box.appendChild(evCard(data,e,ds)));
+
+  const btn=el('button','big-btn ghost ag-new','＋ 新建日程');
+  btn.onclick=()=>openEventModal(ds);
+  box.appendChild(btn);
+}
+
+/* 每人一条时间跨度轨，上面叠当天各日程的小段：一眼看出谁排到几点 */
+function renderSpanBars(data, evs){
+  const byOwner={};
+  evs.forEach((e)=>{ if(isAllDay(e)) return; (byOwner[e.ownerId]=byOwner[e.ownerId]||[]).push(e); });
+  const ids=Object.keys(byOwner); if(!ids.length) return null;
+  const tl=el('div','tl');
+  ids.forEach((id)=>{
+    const m=data.members[id]||{name:'未知',color:'#999'};
+    const row=el('div','tl-row');
+    row.appendChild(el('span','tl-name',m.name+(id===myId()?'（我）':'')));
+    const track=el('span','tl-track');
+    const spans=byOwner[id].map((e)=>[evStartMin(e),evEndMin(e)]);
+    const lo=Math.min.apply(null,spans.map((s)=>s[0])), hi=Math.max.apply(null,spans.map((s)=>s[1]));
+    const base=el('span','tl-bar');
+    base.style.cssText=`left:${lo/1440*100}%;width:${(hi-lo)/1440*100}%;top:4px;bottom:4px;opacity:.4;background:${m.color}`;
+    track.appendChild(base);
+    byOwner[id].forEach((e)=>{
+      const s=evStartMin(e), en=evEndMin(e);
+      const b=el('span','tl-bar');
+      b.style.cssText=`left:${s/1440*100}%;width:${Math.max((en-s)/1440*100,1)}%;background:${m.color}`;
+      b.title=e.title;
+      track.appendChild(b);
+    });
+    row.appendChild(track); tl.appendChild(row);
+  });
+  const axis=el('div','tl-axis');
+  ['0 点','6','12','18','24 点'].forEach((t)=>axis.appendChild(el('span',null,t)));
+  tl.appendChild(axis);
+  return tl;
+}
+
+function evCard(data, e, ds){
+  const owner=data.members[e.ownerId]||{name:'未知',color:'#999'};
+  const card=el('div','ev-card');
+  card.style.borderLeftColor=owner.color;
+  const time=e.type!=='normal' ? (e.type==='work'?'上班':'休息') : (isAllDay(e)?'全天':`${e.start}${e.end?'–'+e.end:''}`);
+  card.appendChild(el('span','ec-time',time));
+  const main=el('div','ec-main');
+  main.appendChild(el('div','ec-title', e.type==='normal'?e.title:(e.title+'（'+(e.type==='work'?'班':'休')+'）')));
+  const meta=[];
+  meta.push(owner.name+(e.ownerId===myId()?'（我）':''));
+  if(e.rrule) meta.push(REPEAT_ZH[(e.rrule.freq||'').toUpperCase()]||'重复');
+  if(e.location) meta.push(e.location);
+  if(e.desc) meta.push(e.desc);
+  main.appendChild(el('div','ec-meta',meta.join(' · ')));
+  card.appendChild(main);
+  card.onclick=()=>openDetail(e, data, ds);
+  return card;
+}
+
+/* ---------- 日 / 周视图：时间轴网格，重叠日程分栏，当前时间红线 ---------- */
+function renderTimeGrid(data, cal, days, fresh){
+  cal.className='calendar tgrid';
+  const tpl=`var(--tg-gutter,40px) repeat(${days.length},minmax(0,1fr))`;
+  const tStr=todayStr();
+
+  const head=el('div','tg-head'); head.style.gridTemplateColumns=tpl;
+  head.appendChild(el('div','tg-corner','时'));
+  days.forEach((ds)=>{
+    const d=IcsParser.parseDate(ds);
+    const c=el('div','tg-hcell'+(ds===tStr?' today':'')+(d.getDay()===0?' sun':d.getDay()===6?' sat':''));
+    c.appendChild(el('div',null,WD_ZH[d.getDay()]));
+    c.appendChild(el('div','dnum',String(d.getDate())));
+    c.onclick=()=>{ state.day=ds; setView('day'); };
+    head.appendChild(c);
+  });
+  cal.appendChild(head);
+
+  const byDay=occurrences(data, days[0], days[days.length-1]);
+  const ad=el('div','tg-allday'); ad.style.gridTemplateColumns=tpl;
+  ad.appendChild(el('div','tg-adlabel','全天'));
+  days.forEach((ds)=>{
+    const {marks,evs}=splitMarks(byDay[ds]||[]);
+    const cell=el('div','tg-adcell');
+    marks.forEach((m)=>{ const chip=el('span','ad-chip',(m.type==='work'?'班 ':'休 ')+m.title);
+      chip.style.background=m.type==='work'?'var(--work-fg)':'var(--rest-fg)'; chip.onclick=()=>openDetail(m,data,ds); cell.appendChild(chip); });
+    evs.filter(isAllDay).forEach((e)=>{
+      const m=data.members[e.ownerId]||{color:'#999'};
+      const chip=el('span','ad-chip',e.title); chip.style.background=m.color; chip.onclick=()=>openDetail(e,data,ds);
+      cell.appendChild(chip);
+    });
+    ad.appendChild(cell);
+  });
+  cal.appendChild(ad);
+
+  const body=el('div','tg-body');
+  const hours=el('div','tg-hours');
+  for(let h=0;h<24;h++) hours.appendChild(el('div','tg-hour',pad(h)+':00'));
+  body.appendChild(hours);
+  const cols=el('div','tg-cols'); cols.style.gridTemplateColumns=`repeat(${days.length},minmax(0,1fr))`;
+  days.forEach((ds)=>{
+    const {evs}=splitMarks(byDay[ds]||[]);
+    const col=el('div','tg-col'+(ds===tStr?' today':''));
+    layoutLanes(evs.filter((e)=>!isAllDay(e))).forEach((it)=>{
+      col.appendChild(timedEvBlock(data,it,ds));
+    });
+    if(ds===tStr){
+      const now=el('div','tg-now');
+      now.style.top=(new Date().getHours()*60+new Date().getMinutes())/1440*100+'%';
+      col.appendChild(now);
+    }
+    cols.appendChild(col);
+  });
+  body.appendChild(cols);
+  cal.appendChild(body);
+
+  if(fresh){
+    const hh=(cal.querySelector('.tg-hour')||{offsetHeight:46}).offsetHeight||46;
+    $('#calMain').scrollTop=Math.max(0, (new Date().getHours()-1)*hh);
+  }
+}
+
+/* 同一天的重叠日程切分成并排的栏：组内互不重叠的各自占满宽度 */
+function layoutLanes(evs){
+  const items=evs.map((e)=>({e,s:evStartMin(e),t:evEndMin(e)})).sort((a,b)=>a.s-b.s||b.t-a.t);
+  const out=[]; let group=[], lanes=[], groupEnd=-1;
+  const close=()=>{ const n=lanes.length; group.forEach((g)=>{ g.lanes=n; }); out.push.apply(out,group); group=[]; lanes=[]; };
+  items.forEach((it)=>{
+    if(group.length && it.s>=groupEnd){ close(); groupEnd=-1; }
+    let li=lanes.findIndex((end)=>end<=it.s);
+    if(li<0){ li=lanes.length; lanes.push(it.t); } else lanes[li]=it.t;
+    it.lane=li; group.push(it); groupEnd=Math.max(groupEnd,it.t);
+  });
+  if(group.length) close();
+  return out;
+}
+
+function timedEvBlock(data, it, ds){
+  const e=it.e, m=data.members[e.ownerId]||{name:'未知',color:'#999'};
+  const b=el('div','tg-ev');
+  const span=Math.max(it.t-it.s,20);
+  b.style.cssText=`top:${it.s/1440*100}%;height:${Math.min(span/1440*100,100-it.s/1440*100)}%;left:${it.lane/it.lanes*100}%;width:${100/it.lanes-1.2}%;background:${m.color};border-left-color:${shade(m.color,-25)}`;
+  b.appendChild(el('b',null,e.title));
+  b.appendChild(el('span','tm',`${e.start||''}${e.end?'–'+e.end:''} ${m.name}`));
+  if(e.location) b.appendChild(el('span','loc','📍 '+e.location));
+  b.onclick=(ev)=>{ ev.stopPropagation(); openDetail(e,data,ds); };
+  return b;
+}
+
+/* 月视图的年/月始终跟随所选日期；翻月时保持"同一天"再夹到月末 */
+function syncYm(){ const d=IcsParser.parseDate(state.day); state.year=d.getFullYear(); state.month=d.getMonth()+1; }
+function setView(v){ state.view=v; localStorage.setItem(VIEW_KEY,v); renderCalendar(true); }
+$('#viewSeg').onclick=(e)=>{ const b=e.target.closest('.seg-btn'); if(b && b.dataset.val!==state.view) setView(b.dataset.val); };
+
+setInterval(()=>{ // 时间红线自己走，不必整页重绘
+  const n=new Date(), pct=(n.getHours()*60+n.getMinutes())/1440*100;
+  document.querySelectorAll('.tg-now').forEach((el2)=>{ el2.style.top=pct+'%'; });
+},60000);
+
 /* ---------- 日程详情 ---------- */
-let detailEvent=null;
-function openDetail(ev, data){
-  detailEvent=ev;
+let detailEvent=null, detailDate=null;
+function openDetail(ev, data, ds){
+  detailEvent=ev; detailDate=ds||ev.date;
   const owner=data.members[ev.ownerId]||{name:'未知',color:'#999'};
   $('#detailDot').style.background=owner.color;
   $('#detailTitle').textContent=ev.title;
   const lines=[];
   lines.push(`成员：${owner.name}${ev.ownerId===myId()?'（我）':''}`);
-  lines.push(`日期：${ev.date}${ev.endDate?' → '+ev.endDate:''}`);
+  lines.push(`日期：${detailDate}${detailDate!==ev.date?'（原起于 '+ev.date+'）':''}${ev.endDate?' → '+ev.endDate:''}`);
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
-  if(ev.allDay) lines.push('全天');
+  if(ev.allDay || !ev.start) lines.push('全天');
   if(ev.rrule) lines.push(`重复：${REPEAT_ZH[(ev.rrule.freq||'').toUpperCase()]||ev.rrule.freq}`);
   if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
   if(ev.location) lines.push(`地点：${ev.location}`);
@@ -614,9 +847,10 @@ $('#detailDelete').onclick=async()=>{
 /* ---------- 新建日程 ---------- */
 function openEventModal(presetDate){
   $('#evTitle').value='';
-  $('#evDate').value=presetDate||dateStr(state.year,state.month,new Date().getDate());
+  $('#evDate').value=presetDate||state.day||todayStr();
   $('#evAllDay').checked=false; $('#timeRow').style.display='flex';
   $('#evStart').value='09:00'; $('#evEnd').value='10:00'; $('#evType').value='normal'; $('#evDesc').value='';
+  $('#evLocation').value='';
   $('#evRepeat').value='none';
   $('#eventModal').hidden=false;
 }
@@ -628,10 +862,12 @@ $('#eventSave').onclick=async()=>{
     title:$('#evTitle').value.trim()||'未命名日程', date,
     allDay:$('#evAllDay').checked, start:$('#evAllDay').checked?'':$('#evStart').value,
     end:$('#evAllDay').checked?'':$('#evEnd').value, type:$('#evType').value, desc:$('#evDesc').value,
+    location:$('#evLocation').value.trim(),
   };
   const rep=$('#evRepeat').value;
   if(rep!=='none'){ ev.rrule={ freq:rep.toUpperCase(), interval:1, byDay:null, byMonthDay:null, count:null, until:null }; }
   Store.addEvent(state.code, ev);
+  state.day=date; syncYm();
   $('#eventModal').hidden=true; toast('已保存，稍后自动同步');
 };
 
@@ -670,7 +906,8 @@ $('#writeBackBtn').onclick=async()=>{
   try{
     await CalBridge.ensurePermission();
     const r=await CalBridge.writeBack(list);
-    toast(`已回写系统日历：更新 ${r.upserted} 条，清理 ${r.removed} 条`);
+    if(r && r.failed) toast(`已回写 ${r.upserted} 条，清理 ${r.removed} 条；${r.failed} 条失败：${r.error}`);
+    else toast(`已回写系统日历：更新 ${r.upserted} 条，清理 ${r.removed} 条`);
     $('#importModal').hidden=true;
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
 };
@@ -684,9 +921,10 @@ $('#importSave').onclick=async()=>{
   $('#importModal').hidden=true; toast(`导入 ${parsed.length} 条（循环日程存规则，不炸开）`);
 };
 
-/* ---------- 应用内更新 ---------- */
+/* ---------- 应用内更新（仅安卓壳；鸿蒙 HAP 不能自装，整组隐藏） ---------- */
 let updInfo = null;
 function renderUpdate(){
+  const grp=$('#updGroup'); if(grp) grp.hidden = !Update.canAutoInstall;
   const dl=$('#updDlBtn'), ins=$('#updInstallBtn'), note=$('#updNote');
   const rdy = Update.ready();
   dl.hidden = !(updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy;
@@ -732,17 +970,32 @@ $('#updInstallBtn').onclick=async()=>{
   catch(e){ toast(e.message); }
 };
 
-/* ---------- 月份导航 & FAB ---------- */
+/* ---------- 视图导航 & FAB ---------- */
 $('#myName').oninput=onNameInput;
-$('#addBtn').onclick=()=>openEventModal();
-$('#prevBtn').onclick=()=>{ state.month--; if(state.month<1){state.month=12;state.year--;} renderCalendar(); };
-$('#nextBtn').onclick=()=>{ state.month++; if(state.month>12){state.month=1;state.year++;} renderCalendar(); };
-$('#todayBtn').onclick=()=>{ const t=new Date(); state.year=t.getFullYear(); state.month=t.getMonth()+1; renderCalendar(); };
+$('#addBtn').onclick=()=>openEventModal(state.day);
+function navStep(n){
+  if(state.view==='month'){
+    const d=IcsParser.parseDate(state.day), want=d.getDate();
+    d.setDate(1); d.setMonth(d.getMonth()+n);
+    d.setDate(Math.min(want, new Date(d.getFullYear(),d.getMonth()+1,0).getDate())); // 31 日翻到短月夹到月末
+    state.day=IcsParser.dstr(d);
+  }else{
+    state.day=shiftDay(state.day, n*(state.view==='week'?7:1));
+  }
+  syncYm(); renderCalendar();
+}
+$('#prevBtn').onclick=()=>navStep(-1);
+$('#nextBtn').onclick=()=>navStep(1);
+$('#todayBtn').onclick=()=>{ state.day=todayStr(); syncYm(); renderCalendar(true); };
 
-/* ---------- 启动 ---------- */
-applyTheme();
-initStart();
-showDeviceId();
-renderUpdate(); // 进页面就按「已下载/无更新」摆好更新按钮，不必等到设置页
-adoptNativeDeviceId(8); // 鸿蒙桥可能晚于首屏才注入，重试等一会儿
-if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话
+/* ---------- 启动：除首次安装外，直接回到最近一次进入的空间 ---------- */
+async function boot(){
+  applyTheme(); showDeviceId(); renderUpdate();
+  const last=localStorage.getItem('tm:lastSpace'), cfg=Dav.cfg();
+  if(last && cfg && cfg.user && Store.get(last)){
+    try{ await enterSpace(last); }catch(e){ initStart(); }
+  }else initStart();
+  adoptNativeDeviceId(8); // 鸿蒙桥可能晚于首屏才注入，重试等一会儿
+  if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话
+}
+boot();
