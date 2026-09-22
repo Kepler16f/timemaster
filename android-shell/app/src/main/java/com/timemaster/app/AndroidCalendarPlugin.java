@@ -99,9 +99,10 @@ public class AndroidCalendarPlugin extends Plugin {
         String[] proj = {
                 Events._ID, Events.CALENDAR_ID, Events.TITLE, Events.ALL_DAY,
                 Events.DTSTART, Events.DTEND, Events.RRULE,
-                Events.EVENT_LOCATION, Events.DESCRIPTION, Events.STATUS,
+                Events.EVENT_LOCATION, Events.DESCRIPTION,
         };
-        String sel = "DTSTART > ? AND DTSTART < ? AND (STATUS IS NULL OR STATUS != 3) AND (DTEND > ? OR (RRULE IS NOT NULL AND RRULE != ''))";
+        // 查询走 view_events：该视图无 STATUS 列，取消语义对应列名为 eventStatus（3=CANCELED）
+        String sel = "DTSTART > ? AND DTSTART < ? AND (eventStatus IS NULL OR eventStatus != 3) AND (DTEND > ? OR (RRULE IS NOT NULL AND RRULE != ''))";
         long floor = from - 400 * DAY; // 循环日程可能开始得很早
         try (Cursor c = getContext().getContentResolver().query(
                 Events.CONTENT_URI, proj, sel,
