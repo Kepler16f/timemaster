@@ -10,8 +10,7 @@ on:
       - '.github/workflows/harmony.yml'
 
 env:
-  # 社区公开镜像（GitHub Releases，免登录）：完整 Linux x64 command-line-tools（SDK+hvigor+ohpm+node）
-  # 5.0.13.x 与工程 compatibleSdkVersion 5.0.0(12) 同属 DevEco 5.0 代际
+  # 社区公开镜像（ErBWs/setup-ohos 自动从 ErBWs/ohos-sdk Releases 拉取，免登录、带 sha256 校验）
   CLT_VERSION: 5.0.13.200
 
 jobs:
@@ -25,30 +24,21 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Fetch HarmonyOS command-line-tools (public mirror)
+      - name: Install native deps (libGL for hvigor)
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev
+
+      - name: Setup HarmonyOS command-line-tools (public mirror + checksum)
+        uses: ErBWs/setup-ohos@v2
+        with:
+          version: ${{ env.CLT_VERSION }}
+          cache: true
+
+      - name: Configure SDK env
         run: |
-          cd "$RUNNER_TEMP"
-          BASE="https://github.com/ErBWs/ohos-sdk/releases/download/${CLT_VERSION}"
-          curl -fL --retry 3 --retry-delay 5 -o part.aa "$BASE/ohos-sdk-linux-amd64.tar.gz.aa"
-          curl -fL --retry 3 --retry-delay 5 -o part.ab "$BASE/ohos-sdk-linux-amd64.tar.gz.ab"
-          curl -fL --retry 3 -o sha256.txt   "$BASE/ohos-sdk-linux-amd64.tar.gz.sha256"
-          cat part.aa part.ab > clt.tar.gz
-          echo "$(awk '{print $1}' sha256.txt)  clt.tar.gz" | sha256sum -c
-          mkdir -p out && tar -zxf clt.tar.gz -C out
-          WRAP=$(find out -maxdepth 6 -type f -path '*/bin/hvigorw' | head -1)
-          ROOT=$(dirname "$(dirname "$WRAP")")
-          mv "$ROOT" "$RUNNER_TEMP/clt"
-          echo "CLT_ROOT=$RUNNER_TEMP/clt" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/clt/bin"           >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/clt/tool/node/bin" >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/clt/tool/hvigor/bin" >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/clt/tool/ohpm/bin"   >> "$GITHUB_PATH"
-          # DEVECO_SDK_HOME 必须指向包含 default/ 的 sdk 根；不同代际归档层级有别，自动定位
-          echo "--- toolchain tree (depth 3) ---"
-          find "$RUNNER_TEMP/clt" -maxdepth 3 -type d | sort | head -80
-          DEF=$(find "$RUNNER_TEMP/clt" -maxdepth 6 -type d -name default | head -1)
-          SDKROOT=$( [ -n "$DEF" ] && dirname "$DEF" || echo "$RUNNER_TEMP/clt/sdk" )
-          echo "DEVECO_SDK_HOME=$SDKROOT" >> "$GITHUB_ENV"
+          echo "--- sdk-pkg.json ---"
+          cat "$HOS_SDK_HOME/default/sdk-pkg.json" 2>/dev/null || find "$HOS_SDK_HOME" -maxdepth 2 -name sdk-pkg.json -exec cat {} +
+          # hvigor 命令行构建要求 DEVECO_SDK_HOME 指向含 default/ 的 sdk 根
+          echo "DEVECO_SDK_HOME=$HOS_SDK_HOME" >> "$GITHUB_ENV"
           echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> "$HOME/.npmrc"
 
       - name: Sync web assets into rawfile
@@ -76,7 +66,7 @@ jobs:
             echo "$P12_B64" | base64 -d > signature/release.p12
             echo "$CER_B64" | base64 -d > signature/release.cer
             echo "$P7B_B64" | base64 -d > signature/release.p7b
-            TOOL=$(find "$CLT_ROOT" -name 'hap-sign-tool.jar' | head -1)
+            TOOL=$(find "$HOME/ohos-sdk" -name 'hap-sign-tool.jar' | head -1)
             java -jar "$TOOL" sign-app -mode localSign \
               -inHap "$HAP" -outHap timemaster-signed.hap \
               -keystore signature/release.p12 -keyAlias "$KEY_ALIAS" \
