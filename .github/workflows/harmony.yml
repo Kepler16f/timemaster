@@ -10,41 +10,46 @@ on:
       - '.github/workflows/harmony.yml'
 
 env:
-  CLI_RELEASE_TAG: harmony-cli
-  CLI_ASSET: command-line-tools-linux.zip
+  # 社区公开镜像（GitHub Releases，免登录）：完整 Linux x64 command-line-tools（SDK+hvigor+ohpm+node）
+  # 5.0.13.x 与工程 compatibleSdkVersion 5.0.0(12) 同属 DevEco 5.0 代际
+  CLT_VERSION: 5.0.13.200
 
 jobs:
   hap:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Fetch HarmonyOS Command Line Tools (private release)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch HarmonyOS command-line-tools (public mirror)
         run: |
-          gh release download "$CLI_RELEASE_TAG" -p "$CLI_ASSET" -D "$RUNNER_TEMP"
-          cd "$RUNNER_TEMP" && unzip -q "$CLI_ASSET"
-          echo "$RUNNER_TEMP/command-line-tools/bin" >> "$GITHUB_PATH"
-          echo "OHOS_BASE_SDK_HOME=$RUNNER_TEMP/command-line-tools/sdk" >> "$GITHUB_ENV"
+          cd "$RUNNER_TEMP"
+          BASE="https://github.com/ErBWs/ohos-sdk/releases/download/${CLT_VERSION}"
+          curl -fL --retry 3 --retry-delay 5 -o part.aa "$BASE/ohos-sdk-linux-amd64.tar.gz.aa"
+          curl -fL --retry 3 --retry-delay 5 -o part.ab "$BASE/ohos-sdk-linux-amd64.tar.gz.ab"
+          curl -fL --retry 3 -o sha256.txt   "$BASE/ohos-sdk-linux-amd64.tar.gz.sha256"
+          cat part.aa part.ab > clt.tar.gz
+          echo "$(awk '{print $1}' sha256.txt)  clt.tar.gz" | sha256sum -c
+          mkdir -p out && tar -zxf clt.tar.gz -C out
+          WRAP=$(find out -maxdepth 6 -type f -path '*/bin/hvigorw' | head -1)
+          ROOT=$(dirname "$(dirname "$WRAP")")
+          mv "$ROOT" "$RUNNER_TEMP/clt"
+          echo "CLT_ROOT=$RUNNER_TEMP/clt" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/clt/bin"           >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/clt/tool/node/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/clt/tool/hvigor/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/clt/tool/ohpm/bin"   >> "$GITHUB_PATH"
+          echo "DEVECO_SDK_HOME=$RUNNER_TEMP/clt/sdk" >> "$GITHUB_ENV"
+          echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> "$HOME/.npmrc"
 
       - name: Sync web assets into rawfile
         run: node scripts/sync-harmony-web.mjs
 
-      - name: ohpm install
-        working-directory: harmony-shell
-        run: ohpm install --all --registry https://ohpm.openharmony.cn/ohpm/
-
-      - name: Build HAP (hvigor)
+      - name: Build HAP (hvigorw assembleHap, debug unsigned)
         working-directory: harmony-shell
         run: hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
 
@@ -63,10 +68,10 @@ jobs:
             cp "$HAP" timemaster-unsigned.hap
           else
             mkdir -p signature
-            echo "$P12_B64"   | base64 -d > signature/release.p12
-            echo "$CER_B64"   | base64 -d > signature/release.cer
-            echo "$P7B_B64"   | base64 -d > signature/release.p7b
-            TOOL=$(find "$RUNNER_TEMP/command-line-tools" -name 'hap-sign-tool.jar' | head -1)
+            echo "$P12_B64" | base64 -d > signature/release.p12
+            echo "$CER_B64" | base64 -d > signature/release.cer
+            echo "$P7B_B64" | base64 -d > signature/release.p7b
+            TOOL=$(find "$CLT_ROOT" -name 'hap-sign-tool.jar' | head -1)
             java -jar "$TOOL" sign-app -mode localSign \
               -inHap "$HAP" -outHap timemaster-signed.hap \
               -keystore signature/release.p12 -keyAlias "$KEY_ALIAS" \
