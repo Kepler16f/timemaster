@@ -17,7 +17,7 @@ struct Index {
         .zoomAccess(false)
         .onControllerAttached(() => {
           HarmonyNative.i().bindWeb(this.controller);
-          this.controller.setJavaScriptProxy(
+          this.controller.registerJavaScriptProxy(
             HarmonyNative.i(), '__HarmonyNative',
             ['httpRequest', 'calEnsure', 'calFetch', 'calWrite', 'calOpen'], null);
         })

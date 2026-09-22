@@ -4,16 +4,12 @@ import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 const TM_PREFIX = 'TimeMaster:';
 const DAY_MS = 86400000;
 
-interface EvTime {
-  startTime: number;
-  endTime: number;
-}
-
 interface EvShape {
   id?: number;
   title?: string;
   type?: number;
-  time?: EvTime;
+  startTime?: number;
+  endTime?: number;
   description?: string;
   location?: string;
 }
@@ -72,7 +68,7 @@ function fromLocal(dateStr: string, hm: string): number {
 
 function getCal(ctx: common.UIAbilityContext): Promise<calendarManager.Calendar> {
   const mgr = calendarManager.getCalendarManager(ctx);
-  const acc = mgr.getActiveAccount();
+  const acc = mgr.getAccount();
   return mgr.getCalendar(acc);
 }
 
@@ -100,12 +96,13 @@ export class HarmonyCalendar {
     const out: OutEv[] = [];
     for (const raw of list) {
       const e = raw as Object as EvShape;
-      const t = e.time;
-      if (!t || !t.startTime) {
+      const st = e.startTime;
+      if (!st) {
         continue;
       }
-      const dur = (t.endTime || t.startTime) - t.startTime;
-      const allDay = dur >= DAY_MS - 1000 && new Date(t.startTime).getHours() === 0;
+      const en = e.endTime || st;
+      const dur = en - st;
+      const allDay = dur >= DAY_MS - 1000 && new Date(st).getHours() === 0;
       const descRaw = e.description || '';
       let desc = descRaw;
       if (descRaw.startsWith(TM_PREFIX)) {
@@ -114,16 +111,16 @@ export class HarmonyCalendar {
       }
       const item: OutEv = {
         title: e.title || '未命名',
-        date: toDateStr(t.startTime),
+        date: toDateStr(st),
         allDay: allDay,
-        start: allDay ? '' : toHmStr(t.startTime),
-        end: allDay ? '' : toHmStr(t.endTime || t.startTime),
+        start: allDay ? '' : toHmStr(st),
+        end: allDay ? '' : toHmStr(en),
         desc: desc,
         location: e.location || '',
         sourceUid: 'hos:' + String(e.id),
       };
       if (allDay && dur > DAY_MS + 1000) {
-        item.endDate = toDateStr((t.endTime || t.startTime) - 1);
+        item.endDate = toDateStr(en - 1);
       }
       out.push(item);
     }
@@ -183,9 +180,11 @@ export class HarmonyCalendar {
       }
       const ev: calendarManager.Event = {
         title: w.title || '未命名',
-        type: calendarManager.EventType.DEFAULT,
-        time: { startTime: startMs, endTime: endMs },
+        type: calendarManager.EventType.TYPE_ACTIVITY,
+        startTime: startMs,
+        endTime: endMs,
         description: marker + '|' + (w.desc || ''),
+        location: w.location || '',
       };
       await cal.addEvent(ev);
       upserted++;

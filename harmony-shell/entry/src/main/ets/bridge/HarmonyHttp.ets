@@ -81,6 +81,7 @@ export class HarmonyHttp {
     const hostPort = m[1];
     const path = (m[2] || '/') + (m[3] || '');
     const host = hostPort.split(':')[0];
+    const port = hostPort.indexOf(':') >= 0 ? Number(hostPort.split(':')[1]) : 443;
     let request = method + ' ' + path + ' HTTP/1.1\r\n' + 'Host: ' + hostPort + '\r\n';
     const hs = Object.keys(headers);
     for (const k of hs) {
@@ -91,26 +92,45 @@ export class HarmonyHttp {
     }
     request += 'Connection: close\r\n\r\n' + body;
 
-    const tls = socket.constructSSLSocketInstance();
+    const tls: socket.TLSSocket = socket.constructTLSSocketInstance();
     try {
-      await tls.connect({ url: 'https://' + hostPort, timeout: 15000 });
-      await tls.send({ data: request });
-      const decoder = util.TextDecoder.create('utf-8');
-      let buf = '';
-      for (let i = 0; i < 100; i++) {
+      await tls.connect({ address: { address: host, port: port }, alpnList: ['http/1.1'] });
+      await tls.send(request);
+      // 已声明 Connection: close：一直读到连接关闭，按字节合并后再解码（避免正文截断/多字节字符跨块乱码）
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (let i = 0; i < 400; i++) {
         try {
-          const chunk: ArrayBuffer = await tls.recv({ length: 8192, timeout: 3000 });
-          buf += decoder.decodeToString(new Uint8Array(chunk));
-          if (buf.indexOf('\r\n\r\n') >= 0) {
+          const ab: ArrayBuffer = await tls.recv({ length: 65536, timeout: 8000 });
+          if (ab.byteLength === 0) {
             break;
           }
+          const u = new Uint8Array(ab);
+          chunks.push(u);
+          total += u.byteLength;
         } catch (e) {
           break;
         }
       }
-      const headEnd = buf.indexOf('\r\n\r\n');
-      const head = headEnd >= 0 ? buf.substring(0, headEnd) : buf;
-      const rest = headEnd >= 0 ? buf.substring(headEnd + 4) : '';
+      const all = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) {
+        all.set(c, off);
+        off += c.byteLength;
+      }
+      let he = -1;
+      for (let j = 0; j + 3 < total; j++) {
+        if (all[j] === 13 && all[j + 1] === 10 && all[j + 2] === 13 && all[j + 3] === 10) {
+          he = j;
+          break;
+        }
+      }
+      if (he < 0) {
+        throw new Error('日历服务器响应格式错误');
+      }
+      const decoder = util.TextDecoder.create('utf-8');
+      const head = decoder.decodeToString(all.subarray(0, he));
+      const rest = decoder.decodeToString(all.subarray(he + 4));
       const lines = head.split('\r\n');
       const sm = /HTTP\/\d(?:\.\d)? (\d{3})/.exec(lines.length > 0 ? lines[0] : '');
       const outHeaders: Record<string, string> = {};
