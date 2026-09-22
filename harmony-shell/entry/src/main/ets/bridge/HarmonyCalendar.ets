@@ -68,8 +68,7 @@ function fromLocal(dateStr: string, hm: string): number {
 
 function getCal(ctx: common.UIAbilityContext): Promise<calendarManager.Calendar> {
   const mgr = calendarManager.getCalendarManager(ctx);
-  const acc = mgr.getAccount();
-  return mgr.getCalendar(acc);
+  return mgr.getCalendar();
 }
 
 export class HarmonyCalendar {
@@ -180,7 +179,7 @@ export class HarmonyCalendar {
       }
       const ev: calendarManager.Event = {
         title: w.title || '未命名',
-        type: calendarManager.EventType.TYPE_ACTIVITY,
+        type: calendarManager.EventType.NORMAL,
         startTime: startMs,
         endTime: endMs,
         description: marker + '|' + (w.desc || ''),

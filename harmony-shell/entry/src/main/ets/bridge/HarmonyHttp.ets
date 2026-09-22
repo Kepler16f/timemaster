@@ -93,24 +93,28 @@ export class HarmonyHttp {
     request += 'Connection: close\r\n\r\n' + body;
 
     const tls: socket.TLSSocket = socket.constructTLSSocketInstance();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    let closed = false;
     try {
-      await tls.connect({ address: { address: host, port: port } });
+      const bindAddr: socket.NetAddress = { address: '0.0.0.0', port: 0 };
+      await tls.bind(bindAddr);
+      tls.on('message', (value: socket.SocketMessageInfo) => {
+        const u = new Uint8Array(value.message);
+        chunks.push(u);
+        total += u.byteLength;
+      });
+      tls.on('close', () => {
+        closed = true;
+      });
+      const netAddr: socket.NetAddress = { address: host, port: port };
+      const secure: socket.TLSSecureOptions = {};
+      const opts: socket.TLSConnectOptions = { address: netAddr, secureOptions: secure };
+      await tls.connect(opts);
       await tls.send(request);
-      // 已声明 Connection: close：一直读到连接关闭，按字节合并后再解码（避免正文截断/多字节字符跨块乱码）
-      const chunks: Uint8Array[] = [];
-      let total = 0;
-      for (let i = 0; i < 400; i++) {
-        try {
-          const ab: ArrayBuffer = await tls.recv({ length: 65536, timeout: 8000 });
-          if (ab.byteLength === 0) {
-            break;
-          }
-          const u = new Uint8Array(ab);
-          chunks.push(u);
-          total += u.byteLength;
-        } catch (e) {
-          break;
-        }
+      // 已声明 Connection: close：一直等到服务端关闭连接，按字节合并后再解码（避免正文截断/多字节字符跨块乱码）
+      for (let i = 0; i < 300 && !closed; i++) {
+        await delayMs(100);
       }
       const all = new Uint8Array(total);
       let off = 0;
@@ -142,7 +146,18 @@ export class HarmonyHttp {
       }
       return { status: sm ? Number(sm[1]) : 0, headers: outHeaders, bodyBase64: b64(rest) };
     } finally {
-      tls.close();
+      try {
+        await tls.close();
+      } catch (e) {
+      }
     }
   }
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise<void>((resolve: (v: void) => void) => {
+    setTimeout(() => {
+      resolve(undefined);
+    }, ms);
+  });
 }

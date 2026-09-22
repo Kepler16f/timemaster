@@ -44,24 +44,6 @@ jobs:
       - name: Sync web assets into rawfile
         run: node scripts/sync-harmony-web.mjs
 
-      - name: Dump SDK declarations (debug, remove after API fixes)
-        run: |
-          ETS=$(find "$HOS_SDK_HOME" -maxdepth 5 -type d -name ets | head -1)
-          CM=$(find "$ETS" -name '@ohos.calendarManager.d.ts' | head -1)
-          SK=$(find "$ETS" -name '@ohos.net.socket.d.ts' | head -1)
-          echo "== calendarManager: $CM =="
-          grep -nE "getAccount|getActiveAccount|getCalendar|createCalendar|getWritableCalendars|getReadableCalendars" "$CM" | head -30
-          echo "-- EventType --"
-          sed -n "$(grep -n 'enum EventType' "$CM" | head -1 | cut -d: -f1),+40p" "$CM"
-          echo "-- interface Event --"
-          sed -n "$(grep -n 'interface Event ' "$CM" | head -1 | cut -d: -f1),+60p" "$CM"
-          echo "== socket: $SK =="
-          grep -nE "constructTLSSocketInstance|declare class TLSSocket|interface TLSConnectOptions|interface TLSReceiveOptions|function connect|abstract connect|recv|send" "$SK" | head -40
-          echo "-- TLSConnectOptions block --"
-          sed -n "$(grep -n 'interface TLSConnectOptions' "$SK" | head -1 | cut -d: -f1),+25p" "$SK"
-          echo "-- TLSSocket class head --"
-          sed -n "$(grep -n 'declare class TLSSocket' "$SK" | head -1 | cut -d: -f1),+120p" "$SK" | grep -nE "connect|send|recv|read|close|^\s*[a-z]+\(" | head -30
-
       - name: Build HAP (hvigorw assembleHap, debug unsigned)
         working-directory: harmony-shell
         run: hvigorw assembleHap -p product=default -p buildMode=debug --no-daemon
