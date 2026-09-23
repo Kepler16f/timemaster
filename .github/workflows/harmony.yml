@@ -121,11 +121,12 @@ jobs:
             echo "$CER_B64" | base64 -d > signature/release.cer
             echo "$P7B_B64" | base64 -d > signature/release.p7b
             TOOL=$(find "$HOME/ohos-sdk" -name 'hap-sign-tool.jar' | head -1)
+            # 参数名以 hap-sign-tool 实际 USAGE 为准：-inFile/-outFile/-keystoreFile/-keystorePwd
             java -jar "$TOOL" sign-app -mode localSign \
-              -inHap "$HAP" -outHap timemaster-signed.hap \
-              -keystore signature/release.p12 -keyAlias "$KEY_ALIAS" \
-              -keyPwd "$KEY_PWD" -kePwd "$P12_PWD" \
-              -signAlg SHA256withECDSA \
+              -inFile "$HAP" -outFile timemaster-signed.hap \
+              -keystoreFile signature/release.p12 -keyAlias "$KEY_ALIAS" \
+              -keyPwd "$KEY_PWD" -keystorePwd "$P12_PWD" \
+              -signAlg SHA256withECDSA -compatibleVersion 12 \
               -appCertFile signature/release.cer -profileFile signature/release.p7b
           fi
 
@@ -136,7 +137,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: timemaster.hap
-          path: timemaster-*.hap
+          path: |
+            timemaster-*.hap
+            readwhole-*.hap
           archive: false
 
       - name: 发布到 GitHub Release（App 内更新从这里取包）
