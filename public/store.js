@@ -74,26 +74,41 @@
     return added;
   }
   function memberRecord() {
-    return { name: App.me.name, color: App.me.color, joinedAt: Date.now(), updatedAt: Date.now(), by: myId() };
+    return { name: App.me.name, color: App.me.color, dev: App.clientId, joinedAt: Date.now(), updatedAt: Date.now(), by: myId() };
   }
-  /* 早期版本（以及身份迁移的中途）在成员表里留下过「既没名字也没颜色」的空记录，
-     合并是并集清不掉它，于是同一个人会并排显示成两个标签。
-     空记录且名下没有任何日程的直接清掉，本机留档一起清，免得下次写回又把它带回去。 */
-  function pruneBlank(code, data) {
+  /* 同一个人出现两条成员：身份键换过（登录/退出邮箱、设备号被原生存储接管、网页存储被系统清过）
+     就会留下旧键那一条，旧键名下没有日程，看起来就像空间里多出来一个人。
+     这里合并而不是删：只折掉「名下零日程」的重复项，本机自己那条永远保留，
+     免得把真有主人的记录并到别人身上。 */
+  function foldMembers(code, data) {
     const c = loadLocal(code);
-    let changed = false;
     const owned = {};
-    for (const id in data.events) owned[data.events[id].ownerId] = 1;
-    const blank = (m) => !m || !m.name;
-    for (const id in data.members) {
-      if (!blank(data.members[id]) || owned[id] || id === data.createdBy) continue;
-      if (id === myId()) { data.members[id] = memberRecord(); changed = true; continue; } // 自己的补全，别把自己删了
-      delete data.members[id];
-      changed = true;
-    }
-    for (const id in c.seeds) {
-      if (blank(c.seeds[id]) && !data.members[id]) { delete c.seeds[id]; changed = true; }
-    }
+    for (const id in data.events) owned[data.events[id].ownerId] = (owned[data.events[id].ownerId] || 0) + 1;
+    const ids = Object.keys(data.members);
+    const mine = myId();
+    const same = (a, b) => {
+      const m = data.members[a], n = data.members[b];
+      if (!m || !n || !m.name || m.name !== n.name) return false;
+      if (m.dev && n.dev) return m.dev === n.dev;      // 新记录带设备号，按设备判定最准
+      return (m.color || '') === (n.color || '');      // 老记录没设备号，只能同昵称 + 同颜色
+    };
+    /* 保留优先级：本机自己 > 名下日程多的 > 更早加入的 */
+    const score = (id) => (id === mine ? 1e18 : 0) + (owned[id] || 0) * 1e15 - (data.members[id].joinedAt || 0);
+    let changed = false;
+    ids.forEach((id) => {
+      if (!data.members[id]) return; // 已被前一组折掉
+      const group = ids.filter((x) => data.members[x] && same(id, x));
+      if (group.length < 2) return;
+      const keep = group.reduce((a, b) => (score(a) >= score(b) ? a : b));
+      group.forEach((x) => {
+        if (x === keep || (owned[x] || 0) > 0) return;
+        delete data.members[x];
+        delete c.seeds[x]; // 留档一起清，否则下一轮又被 restore 回来
+        changed = true;
+      });
+    });
+    const self = data.members[mine];
+    if (self && !self.dev) { self.dev = App.clientId; self.updatedAt = Date.now(); changed = true; } // 老数据补一次设备号
     return changed;
   }
   /* 自己掉出成员表（被别人覆写掉了）就补回来，并标脏让下一轮写回云端 */
@@ -131,7 +146,7 @@
           rememberMembers(c, c.data);
           restoreMembers(c, c.data);
           ensureSelf(c);
-          if (pruneBlank(code, c.data)) c.dirty = true;
+          if (foldMembers(code, c.data)) c.dirty = true;
           /* 合并结果比云端多成员 = 有人（包括自己）被旧版覆盖挤掉了，得把名单推回去；
              只补本机不写回的话，云端会一直缺人，别人看到的还是旧人数 */
           if (Object.keys(c.data.members).some((id) => remoteMembers.indexOf(id) < 0)) c.dirty = true;
@@ -238,7 +253,7 @@
       c.data = merge(c.data || initialData, initialData);
       restoreMembers(c, c.data);
       rememberMembers(c, c.data);
-      pruneBlank(code, c.data);
+      foldMembers(code, c.data);
     }
     if (etag !== undefined) c.etag = etag;
     persist(code);
