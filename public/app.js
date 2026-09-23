@@ -434,7 +434,6 @@ $('#switchSpaceBtn').onclick=openSwitchModal;
 $('#spaceNameBtn').onclick=openSwitchModal;
 $('#swSettings').onclick=()=>{ $('#switchModal').hidden=true; openSettings(); };
 $('#swHome').onclick=()=>{ $('#switchModal').hidden=true; backSpace(); };
-$('#backSpaceBtn').onclick=backSpace;
 $('#swCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#swJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 $('#mgmtCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
@@ -543,10 +542,6 @@ function histBack(){
 function backSpace(){
   const prev=histBack();
   if(prev && prev!==state.code) enterSpace(prev);
-  else syncSpaceBtns();
-}
-function syncSpaceBtns(){
-  $('#backSpaceBtn').classList.toggle('hidden', !histPeek());
 }
 async function enterSpace(code){
   histPush(code);
@@ -561,7 +556,6 @@ async function enterSpace(code){
   renderPeopleTags();
   showScreen('calendarScreen'); /* 必须先显示：藏在 display:none 里量不到格子宽度，周视图的「今天置左」会算成 0 */
   renderCalendar(true); updateSyncChip();
-  syncSpaceBtns();
   Store.syncCode(code);
   startPolling();
 }
