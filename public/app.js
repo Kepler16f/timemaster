@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.2.3';
+const APP_VERSION = '0.2.4';
 const VIEW_KEY = 'tm:view';
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
@@ -377,16 +377,16 @@ function spaceItems(listEl, onClick){
     const st = Store.status(s.code);
     const item=document.createElement('div');
     item.className='space-item'+(s.code===state.code?' current':'');
-    item.innerHTML=`<div class="si-main">
-        <div class="si-name">${escapeHtml(s.name||'共享空间')}${s.code===state.code?'<span class="si-now">使用中</span>':''}</div>
-        <div class="si-meta">${s.code} · ${data?Object.keys(data.members).length:0} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}</div>
-      </div>`;
+    item.innerHTML=`<div class="si-top">
+        <div class="si-name">${escapeHtml(s.name||'共享空间')}</div>
+        ${s.code===state.code?'<span class="si-now">使用中</span>':''}
+      </div>
+      <div class="si-meta">${s.code} · ${data?Object.keys(data.members).length:0} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}</div>`;
     if(onClick) item.onclick=()=>onClick(s);
     else {
       /* 整张卡片可点：新建/加入空间后在设置里点一下就切过去 */
       item.onclick=()=>{ if(s.code!==state.code && needDav()) enterSpace(s.code); };
-      const enter=document.createElement('button'); enter.className='si-btn'; enter.textContent='进入';
-      enter.onclick=(ev2)=>{ ev2.stopPropagation(); if(needDav()) enterSpace(s.code); };
+      const btns=document.createElement('div'); btns.className='si-btns'; item.appendChild(btns);
       const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
       clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
       const out=document.createElement('button'); out.className='si-btn danger'; out.textContent='移除';
@@ -396,7 +396,7 @@ function spaceItems(listEl, onClick){
         Store.removeSpace(s.code);
         if(state.code===s.code) initStart(); else renderSpaceMgmt();
       };
-      item.appendChild(enter); item.appendChild(clr); item.appendChild(out);
+      btns.appendChild(clr); btns.appendChild(out);
     }
     listEl.appendChild(item);
   });
@@ -668,7 +668,7 @@ function renderCalendar(fresh){
     $('#weekHeader').hidden=true;
     renderTimeGrid(data, cal, state.view==='week'?weekDays(state.day):[state.day], fresh);
   }
-  $('#monthToggle').textContent = state.monthCollapsed ? '⌄ 展开' : '⌃ 收起';
+  $('#monthToggle').textContent = state.monthCollapsed ? '⌄' : '⌃';
   $('#monthTitle').innerHTML = state.view==='month'
     ? escapeHtml(`${state.year}年${state.month}月`)
     : (state.view==='week'
@@ -797,8 +797,16 @@ function renderTimeGrid(data, cal, days, fresh){
   days.forEach((ds)=>{
     const d=IcsParser.parseDate(ds);
     const c=el('div','tg-hcell'+(ds===tStr?' today':'')+(d.getDay()===0?' sun':d.getDay()===6?' sat':''));
-    c.appendChild(el('div',null,WD_ZH[d.getDay()]));
-    c.appendChild(el('div','dnum',String(d.getDate())));
+    if(days.length===1){
+      /* 日视图：日期、星期尽量挤在一行，列宽不够时靠 flex-wrap 自动折两行 */
+      c.classList.add('wide');
+      if(ds===tStr) c.appendChild(el('span','tdy','今天'));
+      c.appendChild(el('span','dt',`${d.getMonth()+1}月${d.getDate()}日`));
+      c.appendChild(el('span','wd',WD_ZH[d.getDay()]));
+    } else {
+      c.appendChild(el('div',null,WD_ZH[d.getDay()]));
+      c.appendChild(el('div','dnum',String(d.getDate())));
+    }
     c.onclick=()=>{ state.day=ds; setView('day'); };
     head.appendChild(c);
   });
