@@ -3,7 +3,8 @@
   'use strict';
 
   const listeners = [];
-  const cache = {}; // code -> { data, etag, dirty, syncing }
+  const goneListeners = []; // 云端空间被创建者删除时的回调
+  const cache = {}; // code -> { data, etag, dirty, seeds, syncing }
 
   function localKey(code) { return 'tm:space:' + code; }
   /* 身份键：登录账户后跨设备一致，未登录回退设备 id */
@@ -71,14 +72,14 @@
   /* ---------- 本地缓存 ---------- */
   function persist(code) {
     const c = cache[code];
-    localStorage.setItem(localKey(code), JSON.stringify({ data: c.data, etag: c.etag, dirty: c.dirty, seeds: c.seeds }));
+    localStorage.setItem(localKey(code), JSON.stringify({ data: c.data, etag: c.etag, dirty: c.dirty, seeds: c.seeds, gone: c.gone || 0 }));
   }
   function loadLocal(code) {
     if (cache[code]) return cache[code];
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(localKey(code))); } catch (e) { /* noop */ }
-    cache[code] = saved ? { data: saved.data, etag: saved.etag, dirty: !!saved.dirty, seeds: saved.seeds || {}, syncing: false }
-      : { data: null, etag: null, dirty: false, seeds: {}, syncing: false };
+    cache[code] = saved ? { data: saved.data, etag: saved.etag, dirty: !!saved.dirty, seeds: saved.seeds || {}, syncing: false, gone: saved.gone || 0 }
+      : { data: null, etag: null, dirty: false, seeds: {}, syncing: false, gone: 0 };
     return cache[code];
   }
 
@@ -180,6 +181,7 @@
         if (r.status === 200) {
           const remote = JSON.parse(r.text);
           const remoteMembers = Object.keys(remote.members || {});
+          c.gone = 0;
           c.data = c.data ? merge(c.data, remote) : remote;
           if (!c.data.members) c.data.members = {};
           c.etag = r.etag || null;
@@ -191,7 +193,13 @@
              只补本机不写回的话，云端会一直缺人，别人看到的还是旧人数 */
           if (Object.keys(c.data.members).some((id) => remoteMembers.indexOf(id) < 0)) c.dirty = true;
         } else if (r.status === 404) {
+          /* 云端文档不见了。要连续两轮（且本机没有待写入的改动）才判定「被创建者删除」——
+             换网盘账号、改了目录、服务端抖动都会瞬时 404，第一轮就删本机副本太危险 */
           c.etag = null;
+          if (c.data && !c.dirty) {
+            if (c.gone) { c.gone = 0; persist(code); goneListeners.forEach((fn) => fn(code)); }
+            else { c.gone = 1; persist(code); }
+          }
         }
         if (!c.dirty || !c.data) { persist(code); notify(code); break; }
         /* etag 缺失时宁可无条件覆盖（文档已经过上面的全量合并），
@@ -303,7 +311,7 @@
     createSpace, openRemote, ensureMember, upsertSpaceMeta, attach,
     get(code) { return loadLocal(code).data; },
     status(code) { const c = loadLocal(code); return { dirty: c.dirty, syncing: c.syncing, lastSync: c.lastSync, exists: !!c.data }; },
-    syncCode, scheduleSync, onChange, mutate,
+    syncCode, scheduleSync, onChange, onSpaceGone: (fn) => goneListeners.push(fn), mutate,
     listSpaces() { try { return JSON.parse(localStorage.getItem('tm:spaces') || '[]'); } catch (e) { return []; } },
     removeSpace(code) {
       const spaces = api.listSpaces().filter((s) => s.code !== code);

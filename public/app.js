@@ -5,6 +5,7 @@ const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#F
 const APP_VERSION = '0.2.5';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
+const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
 window.__setSafeInsets = function (topPx, bottomPx) {
@@ -63,6 +64,7 @@ const state = {
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
   view: localStorage.getItem(VIEW_KEY) || 'month',
+  dayView: localStorage.getItem(DAYVIEW_KEY) === '1',
   weekFit: localStorage.getItem(WEEK_FIT_KEY) === '7' ? 7 : 4,
   visible: {},
   spaceMode: 'create',
@@ -96,6 +98,22 @@ $('#themeSeg').onclick = (e) => {
   applyTheme();
 };
 if (darkMQ.addEventListener) darkMQ.addEventListener('change', () => { if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme(); });
+
+/* 日视图默认收起：不常用的人不必在视图条上看见那一格 */
+function syncDayView(){
+  const on = state.dayView;
+  const btn = $('#viewSeg [data-val="day"]');
+  if (btn) btn.classList.toggle('hidden', !on);
+  const sw = $('#dayViewSw');
+  if (sw) sw.checked = on;
+  if (!on && state.view === 'day') { state.view = 'week'; localStorage.setItem(VIEW_KEY, 'week'); }
+}
+$('#dayViewSw').onchange = (e) => {
+  state.dayView = e.target.checked;
+  localStorage.setItem(DAYVIEW_KEY, e.target.checked ? '1' : '0');
+  syncDayView();
+  renderCalendar(true);
+};
 /* 鸿蒙 ArkWeb 里系统深色模式在应用切回前台时才保证同步过来，媒体查询事件不一定触发 */
 document.addEventListener('visibilitychange', () => { if (!document.hidden) applyTheme(); });
 
@@ -430,7 +448,7 @@ function openSwitchModal(){
 $('#switchSpaceBtn').onclick=openSwitchModal;
 $('#spaceNameBtn').onclick=openSwitchModal;
 $('#swSettings').onclick=()=>{ $('#switchModal').hidden=true; openSettings(); };
-$('#swHome').onclick=()=>{ $('#switchModal').hidden=true; backSpace(); };
+$('#swHome').onclick=()=>{ $('#switchModal').hidden=true; }; /* 直接返回就是留在当前空间，不做「跳到上一个空间」 */
 $('#swCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#swJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 $('#mgmtCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
@@ -513,35 +531,7 @@ $('#clearOk').onclick=async()=>{
 };
 
 /* ---------- 进入空间 ---------- */
-const HIST_KEY='tm:spaceHist';
-function histPush(code){
-  const h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
-  if(h[h.length-1]!==code) h.push(code);
-  localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(-12)));
-}
-function histPeek(){
-  const h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
-  if(h.length<2) return null;
-  const spaces=Store.listSpaces();
-  for(let i=h.length-2;i>=0;i--) if(spaces.some((s)=>s.code===h[i])) return h[i];
-  return null;
-}
-/* 真正回退：把当前空间弹出后取上一个仍存在的空间；找不到就什么都不改 */
-function histBack(){
-  const prev=histPeek();
-  if(!prev) return null;
-  const h=JSON.parse(localStorage.getItem(HIST_KEY)||'[]');
-  while(h.length>1 && h[h.length-1]!==prev) h.pop();
-  localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(-12)));
-  return prev;
-}
-/* 「返回上一个空间」：没有上一个空间时留在当前空间，绝不退回开屏页 */
-function backSpace(){
-  const prev=histBack();
-  if(prev && prev!==state.code) enterSpace(prev);
-}
 async function enterSpace(code){
-  histPush(code);
   state.code=code;
   localStorage.setItem('tm:lastSpace', code); // 下次冷启动直接回到这个空间
   state.day=todayStr(); syncYm();
@@ -569,6 +559,18 @@ Store.onChange((code)=>{ if(code===state.code){
   const d=Store.get(code); if(d) $('#spaceName').textContent=d.name||'共享日程';
   if(!$('#settingsScreen').classList.contains('hidden')) renderSpaceMgmt();
 } });
+
+/* 云端空间被创建者删掉：提示使用者，同意后连本机副本一起移除 */
+Store.onSpaceGone(async (code)=>{
+  const data=Store.get(code); if(!data) return;
+  if(state.code===code) stopPolling();
+  const ok=await uiConfirm('空间已被删除',
+    `「${data.name||code}」已经被创建者删除，网盘上已经没有这份数据了。要把它从本机一并移除吗？`, '移除本机副本');
+  if(!ok){ if(state.code===code) startPolling(); return; }
+  Store.removeSpace(code);
+  toast('已移除被删除的空间');
+  if(state.code===code){ state.code=null; initStart(); } else renderSpaceMgmt();
+});
 
 function updateSyncChip(){
   const s=Store.status(state.code); const el=$('#syncState');
@@ -824,7 +826,7 @@ function renderTimeGrid(data, cal, days, fresh){
       c.appendChild(el('div',null,WD_ZH[d.getDay()]));
       c.appendChild(el('div','dnum',String(d.getDate())));
     }
-    c.onclick=()=>{ state.day=ds; setView('day'); };
+    c.onclick=()=>{ state.day=ds; if(state.dayView) setView('day'); };
     head.appendChild(c);
   });
   pin.appendChild(head);
@@ -925,7 +927,7 @@ function timedEvBlock(data, it, ds){
 
 /* 月视图的年/月始终跟随所选日期；翻月时保持"同一天"再夹到月末 */
 function syncYm(){ const d=IcsParser.parseDate(state.day); state.year=d.getFullYear(); state.month=d.getMonth()+1; }
-function setView(v){ state.view=v; localStorage.setItem(VIEW_KEY,v); renderCalendar(true); }
+function setView(v){ if(v==='day' && !state.dayView) v='week'; state.view=v; localStorage.setItem(VIEW_KEY,v); renderCalendar(true); }
 $('#viewSeg').onclick=(e)=>{ const b=e.target.closest('.seg-btn'); if(b && b.dataset.val!==state.view) setView(b.dataset.val); };
 
 /* ---------- 月视图折叠：上滑收起整月（只留选中那一行），下划展开 ---------- */
@@ -1157,7 +1159,7 @@ $('#todayBtn').onclick=()=>{ state.day=todayStr(); syncYm(); renderCalendar(true
 
 /* ---------- 启动：除首次安装外，直接回到最近一次进入的空间 ---------- */
 async function boot(){
-  applyTheme(); showDeviceId(); renderUpdate();
+  applyTheme(); showDeviceId(); renderUpdate(); syncDayView();
   const last=localStorage.getItem('tm:lastSpace'), cfg=Dav.cfg();
   if(last && cfg && cfg.user && Store.get(last)){
     try{ await enterSpace(last); }catch(e){ initStart(); }
