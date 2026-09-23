@@ -56,12 +56,14 @@
     <div class="space-chip" id="spaceChip">
       <button id="spaceNameBtn" class="sc-main" title="快速切换空间">
         <span class="sc-row"><span id="spaceName">空间</span><span class="caret">⌄</span></span>
+      </button>
+      <div class="sc-actions">
+        <button id="copyCode" class="code-btn">邀请码 <b id="codeText">--------</b> 点击复制</button>
+        <button id="syncBtn" class="sync-btn" title="立即同步">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.6-5.7L20 8.5"/><path d="M20 12a8 8 0 0 1-13.6 5.7L4 15.5"/><polyline points="20 3.5 20 8.5 15 8.5"/><polyline points="4 20.5 4 15.5 9 15.5"/></svg>
+        </button>
         <span id="syncState" class="sync-state"></span>
-      </button>
-      <button id="copyCode" class="code-btn">邀请码 <b id="codeText">--------</b> 点击复制</button>
-      <button id="syncBtn" class="sync-btn" title="立即同步">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.6-5.7L20 8.5"/><path d="M20 12a8 8 0 0 1-13.6 5.7L4 15.5"/><polyline points="20 3.5 20 8.5 15 8.5"/><polyline points="4 20.5 4 15.5 9 15.5"/></svg>
-      </button>
+      </div>
     </div>
 
     <div class="seg view-seg" id="viewSeg">

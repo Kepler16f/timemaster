@@ -119,12 +119,14 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .cal-main.tgrid-mode > #calendar { height: 100%; }
 
 /* ---------- 空间条（标题大、同步靠最右、邀请码一行显示） ---------- */
-/* 空间条：标题独占一行，邀请码和同步按钮在第二行；标题再长也只省略自己，不挤按钮 */
+/* 空间条：第一行只有标题；第二行是「邀请码 + 同步 + 同步状态」。
+   标题再长也只省略自己，绝不回头压缩第二行的按钮 */
 .space-chip { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 10px; margin: 0 12px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 7px 12px; box-shadow: 0 1px 3px rgba(0,0,0,.05); flex: 0 0 auto; }
-.sc-main { display: flex; flex: 1 1 100%; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; border: none; background: transparent; color: inherit; padding: 0; margin: 0; font: inherit; cursor: pointer; }
+.sc-main { display: flex; flex: 1 1 100%; align-items: baseline; gap: 3px; min-width: 0; border: none; background: transparent; color: inherit; padding: 0; margin: 0; font: inherit; cursor: pointer; }
 .sc-row { display: flex; align-items: baseline; gap: 3px; min-width: 0; max-width: 100%; }
 .sc-main #spaceName { font-size: 17px; font-weight: 700; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sc-main .caret { font-size: 11px; color: var(--text-weak); flex: 0 0 auto; }
+.sc-actions { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
 .code-btn { flex: 0 1 auto; min-width: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 16px; padding: 5px 10px; font-size: 12px; color: var(--icon); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .code-btn b { color: var(--accent); letter-spacing: 1px; }
 .sync-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; background: var(--panel); color: var(--accent); cursor: pointer; }
@@ -344,7 +346,7 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .export-help p { font-size: 12.5px; color: var(--text-weak); line-height: 1.7; margin: 8px 0 0; }
 .import-tip.warn { color: #e5484d; margin-top: 8px; }
 
-.sync-state{font-size:11px;color:var(--weak2)}
+.sync-state{font-size:11px;color:var(--weak2);white-space:nowrap}
 
 /* ---------- 设置页 ---------- */
 .settings-body { padding: 4px 16px calc(104px + var(--sa-bottom)); display: flex; flex-direction: column; gap: 18px; }
@@ -400,8 +402,9 @@ textarea:focus { border-color: var(--accent); background: var(--field-bg); box-s
   .today-btn { padding: 3px 11px; font-size: 12px; }
   .nav-btn { width: 28px; height: 28px; font-size: 18px; }
   .space-chip { margin: 0 14px 6px; padding: 4px 10px; flex-wrap: nowrap; gap: 8px; }
-  /* 矮屏高度金贵，空间条退回一行：标题自己省略，按钮绝不被压 */
+  /* 矮屏高度金贵，空间条退回一行：标题自己省略，按钮和状态文字绝不被压 */
   .sc-main { flex: 0 1 auto; }
+  .sc-actions { flex: 0 0 auto; }
   .code-btn { flex: 0 0 auto; }
   .sc-main #spaceName { font-size: 15px; }
   .view-seg { margin: 0 14px 6px; padding: 3px; }

@@ -558,8 +558,9 @@ async function enterSpace(code){
   Store.dedupe(code);
   $('#spaceName').textContent=data.name||'共享日程';
   $('#codeText').textContent=code;
-  renderPeopleTags(); renderCalendar(true); updateSyncChip();
-  showScreen('calendarScreen');
+  renderPeopleTags();
+  showScreen('calendarScreen'); /* 必须先显示：藏在 display:none 里量不到格子宽度，周视图的「今天置左」会算成 0 */
+  renderCalendar(true); updateSyncChip();
   syncSpaceBtns();
   Store.syncCode(code);
   startPolling();
@@ -865,6 +866,15 @@ function renderTimeGrid(data, cal, days, fresh){
        一旦被程序滚走就再也滑不回来（表现为表头被吃掉一半、划不到顶），所以强制归零 */
     $('#calMain').scrollTop=0; cal.scrollTop=top;
     cal.scrollLeft=0;
+    /* 周视图：把今天滑到小时列右边第一格（周日本来就是一周第一格，不用滑） */
+    const ti=days.indexOf(tStr);
+    if(ti>0 && days.length>1){
+      const cell=head.children[ti+1]; /* 第 0 格是小时列的占位 */
+      if(cell){
+        const gutter=(cal.querySelector('.tg-hours')||{offsetWidth:40}).offsetWidth||40;
+        cal.scrollLeft += cell.getBoundingClientRect().left - cal.getBoundingClientRect().left - gutter;
+      }
+    }
   }
 }
 
