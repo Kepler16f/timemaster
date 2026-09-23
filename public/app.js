@@ -1065,13 +1065,16 @@ let updInfo = null;
 function renderUpdate(){
   const grp=$('#updGroup'); if(grp) grp.hidden = !Update.canAutoInstall;
   const dl=$('#updDlBtn'), ins=$('#updInstallBtn'), note=$('#updNote');
-  const rdy = Update.ready();
-  dl.hidden = !(updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy;
-  ins.hidden = !(rdy && Update.canAutoInstall);
+  /* 这两个按钮是用 .hidden 类藏起来的，切换必须走 classList——
+     只改 el.hidden 属性的话类名还留在身上，按钮永远出不来（下载/安装入口就是这么丢的） */
+  let rdy = Update.ready();
+  if(rdy && (!updInfo || rdy.ver !== updInfo.latest)){ Update.clearReady(); rdy = null; } // 旧版残留的包不算就绪
+  dl.classList.toggle('hidden', !(updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy);
+  ins.classList.toggle('hidden', !(rdy && Update.canAutoInstall));
   note.hidden = !updInfo;
   if(updInfo){
     const lines=[];
-    if(rdy) lines.push(`v${rdy.ver} 安装包已就绪，点立即安装`);
+    if(rdy) lines.push(`v${rdy.ver} 安装包已下载完成，点「立即安装」即可覆盖升级`);
     else if(updInfo.hasUpdate) lines.push(`新版本 v${updInfo.latest}：${(updInfo.notes||'').replace(/\s+/g,' ').slice(0,120)}`);
     else lines.push(`已是最新版本 v${updInfo.latest}`);
     if(!Update.canAutoInstall) lines.push('本平台不能自动安装，请到发布页下载：'+(updInfo.page||''));
@@ -1093,7 +1096,7 @@ $('#updDlBtn').onclick=async()=>{
   btn.disabled=true; st.textContent='后台下载 0%';
   try{
     const path = await Update.download(updInfo.url, (p)=>{
-      const pct = p && p.total ? Math.floor(p.received/p.total*100) : 0;
+      const pct = p && p.percent != null ? p.percent : (p && p.total ? Math.floor(p.received/p.total*100) : 0);
       st.textContent = `下载中 ${pct}%（可退出此页，不影响）`;
     });
     Update.markReady(updInfo.latest, path);

@@ -58,12 +58,17 @@
   }
 
   /* 下载走原生 socket：WebView 自己打不开 apk 链接，也不会边下边让出界面 */
+  let progCb = null, progBound = false;
   async function download(url, onProgress) {
     const p = capUpdate();
     if (!p) {
       throw new Error(isHarmony() ? '鸿蒙暂不支持自装 HAP，请到发布页手动签名安装' : '请在 App 内使用更新功能');
     }
-    if (p.addListener) { try { p.addListener('progress', (e) => { if (onProgress) onProgress(e); }); } catch (e) { /* noop */ } }
+    progCb = onProgress || null;
+    if (!progBound && p.addListener) {
+      progBound = true; // 只绑一次，避免每下一次就多一个监听、进度被重复回调
+      try { p.addListener('progress', (e) => { if (progCb) progCb(e); }); } catch (e) { progBound = false; }
+    }
     const r = await p.download({ url, name: FILE_NAME });
     return (r && r.path) || '';
   }
