@@ -68,6 +68,12 @@ export class HarmonyNative {
       .catch((e: Error) => this.reply(id, e.message, null));
   }
 
+  calEdit(id: string, payloadJson: string): void {
+    HarmonyCalendar.editOne(this.ctx, payloadJson)
+      .then((r: string) => this.reply(id, null, r))
+      .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
   calOpen(id: string): void {
     HarmonyCalendar.openSettings(this.ctx)
       .then(() => this.reply(id, null, '{}'))

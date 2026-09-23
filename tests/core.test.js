@@ -106,11 +106,15 @@ store.attach('C1', local);
   eq('rename: createSpace 记录创建者', space3.createdBy, 'zDevice');
   eq('rename: 创建者 canRename', store.canRename('C3'), true);
   eq('rename: 创建者改名成功', store.renameSpace('C3', '改名成功'), true);
-  win.Auth = { memberKey: () => 'otherDevice' };
-  eq('rename: 非创建者 canRename', store.canRename('C3'), false);
-  eq('rename: 非创建者改名被拒', store.renameSpace('C3', '非法改名'), false);
-  eq('rename: 旧空间无 createdBy 时取最早成员', store.canRename('C1'), false); // C1 members a(joinedAt1) b(joinedAt2)，我是 otherDevice
-  delete win.Auth;
+  /* 非创建者要拿一个「我」从没用过的键来当创建者：isMine 会把用过的自己的键都记住，
+     光换 memberKey 还是会被认成同一个人（这正是放宽归属判定想要的行为） */
+  const space4 = store.createSpace('C4', '别人建的空间');
+  space4.createdBy = 'otherPerson';
+  space4.members.otherPerson = { name: '别人', color: '#9', joinedAt: 3, updatedAt: 3, by: 'otherPerson' };
+  await store.attach('C4', space4);
+  eq('rename: 非创建者 canRename', store.canRename('C4'), false);
+  eq('rename: 非创建者改名被拒', store.renameSpace('C4', '非法改名'), false);
+  eq('rename: 旧空间无 createdBy 时取最早成员', store.canRename('C1'), false); // C1 members a(joinedAt1) b(joinedAt2)，我谁也不是
 
   /* ---------- 5. 系统日程导入去重（同批多行 / 重复导入 / 历史清理） ---------- */
   const mk = (n) => Array.from({ length: n }, () => ({ title: '循环日程', date: '2026-09-22', allDay: true, sourceUid: 'cal:1:42' }));

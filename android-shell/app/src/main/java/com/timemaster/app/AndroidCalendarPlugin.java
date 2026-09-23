@@ -209,6 +209,35 @@ public class AndroidCalendarPlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /** 把改动写回这条日程原来所在的日历：只 update，绝不删除别人的日程 */
+    @PluginMethod
+    public void edit(PluginCall call) {
+        JSONObject ev = new JSONObject(call.getData());
+        long sysId, calId;
+        try {
+            sysId = Long.parseLong(ev.optString("evId"));
+            calId = Long.parseLong(ev.optString("calId"));
+        } catch (NumberFormatException e) {
+            call.reject("缺少要修改的日程编号");
+            return;
+        }
+        try {
+            ContentValues cv = toValues(calId, ev,
+                    new SimpleDateFormat("yyyy-MM-dd", Locale.US), TimeZone.getDefault().getID());
+            int n = getContext().getContentResolver().update(
+                    ContentUris.withAppendedId(Events.CONTENT_URI, sysId), cv, null, null);
+            if (n <= 0) {
+                call.reject("原日历里已找不到这条日程，可能已被删除");
+                return;
+            }
+            JSObject ret = new JSObject();
+            ret.put("updated", n);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("写回原日历失败: " + e.getMessage());
+        }
+    }
+
     private ContentValues toValues(long calId, JSONObject ev, SimpleDateFormat df, String tzid) throws Exception {
         ContentValues cv = new ContentValues();
         cv.put(Events.CALENDAR_ID, calId);

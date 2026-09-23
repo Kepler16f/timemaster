@@ -49,6 +49,24 @@
           "abilities": ["EntryAbility"],
           "when": "inuse"
         }
+      },
+      {
+        /* 受限开放权限：需在 AGC 申请且签名 profile 的 allowed-acls 带上才能授予，
+           否则只能读写本应用自己创建的日程（ensure 里按降级处理） */
+        "name": "ohos.permission.READ_WHOLE_CALENDAR",
+        "reason": "$string:calendar_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.WRITE_WHOLE_CALENDAR",
+        "reason": "$string:calendar_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
       }
     ]
   }

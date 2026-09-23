@@ -1056,16 +1056,51 @@ $('#eventSave').onclick=async()=>{
   };
   if(allDay) ev.endDate=null;
   let ok=true;
+  let sysBack=null;
   if(editingEvent){
     if(date!==editingEvent.date) ev.endDate=null; // 改了日期，原来的多天区间不再成立
     ok=Store.updateEvent(state.code, editingEvent.id, ev);
+    /* 从系统日历导入的日程：改动要回到它原来所在的那个日历，改前先逐条确认，且永不删除 */
+    if(ok && CalBridge.sysHandle(editingEvent.sourceUid)){
+      sysBack={ before:editingEvent, after:Object.assign({}, editingEvent, ev) };
+    }
   } else {
     Store.addEvent(state.code, ev);
   }
   state.day=date; syncYm();
   editingEvent=null;
   $('#eventModal').hidden=true; toast(ok?'已保存，稍后自动同步':'只有创建者可以编辑这条日程');
+  if(sysBack) await syncBackToSystemCalendar(sysBack.before, sysBack.after);
 };
+
+/* 事件开始时间的毫秒值：写回原日历时靠它框定原生侧的回查范围 */
+function evStartMs(ev){
+  if(!ev || !ev.date) return 0;
+  const p=String(ev.date).split('-'), hm=String(ev.start||'00:00').split(':');
+  const h=ev.allDay?0:Number(hm[0]), m=ev.allDay?0:(Number(hm[1])||0);
+  return new Date(Number(p[0]),Number(p[1])-1,Number(p[2]),h,m).getTime();
+}
+function evTimeText(ev){
+  return ev.allDay ? (ev.date+' 全天'+(ev.endDate?' ~ '+ev.endDate:'')) : (ev.date+' '+(ev.start||'')+'-'+(ev.end||''));
+}
+async function syncBackToSystemCalendar(before, after){
+  const cal=after.calDisp||after.calAcct||'原日历';
+  const changed=[];
+  if(evStartMs(before)!==evStartMs(after)||String(before.endDate)!==String(after.endDate)) changed.push('时间：'+evTimeText(before)+' → '+evTimeText(after));
+  if((before.title||'')!==(after.title||'')) changed.push('标题：'+before.title+' → '+after.title);
+  if((before.desc||'')!==(after.desc||'')) changed.push('备注有改动');
+  if((before.location||'')!==(after.location||'')) changed.push('地点：'+(before.location||'无')+' → '+(after.location||'无'));
+  if(!changed.length) return; // 没改到系统日历里的字段，不必打扰
+  const go=await uiConfirm('写回系统日历',
+    '这条日程来自系统日历「'+cal+'」。\n\n'+changed.join('\n')+
+    '\n\n要把改动写回该日历吗？只修改这一条，不会删除任何日程。', '写回');
+  if(!go) return;
+  try{
+    await CalBridge.ensurePermission();
+    await CalBridge.editSystemEvent(after, evStartMs(before));
+    toast('已写回系统日历「'+cal+'」');
+  }catch(e){ toast('写回原日历失败：'+e.message); }
+}
 
 /* ---------- 系统日历导入 / 回写 ---------- */
 function fillImportOwner(){
@@ -1105,6 +1140,9 @@ $('#writeBackBtn').onclick=async()=>{
   const data=Store.get(state.code); if(!data) return;
   const list=Object.keys(data.events).map(k=>data.events[k])
     .filter(e=>memberOn(e.ownerId) && e.type!=='work' && e.type!=='rest')
+    /* 来自系统日历的条目不参与全量回写：它们只按逐条确认改回原日历，
+       否则会被复制进本应用自己的日历，变成同一件事的两份 */
+    .filter(e=>!CalBridge.sysHandle(e.sourceUid))
     /* 写进系统日历时注明是谁的日程，回读再导入时也能靠这行标记跳过自己的条目 */
     .map(e=>Object.assign({}, e, { ownerName:(data.members[e.ownerId]||{}).name||'' }));
   if(!list.length) return toast('没有可回写的日程');

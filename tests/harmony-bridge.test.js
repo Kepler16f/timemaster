@@ -26,6 +26,7 @@ const files = new Map(); // pathname -> { content, etag, dir }
 let ver = 0;
 let serveEtag = true; // 有些网盘/反向代理不透传 etag，用来测退化路径
 let lastPutHeaders = null;
+const editCalls = []; // 假原生侧收到的「写回原日历」调用
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 function done(id, err, resJson) { setTimeout(() => win.__harmonyNativeCb(id, err, resJson == null ? null : resJson), 0); }
 
@@ -63,11 +64,12 @@ win.__HarmonyNative = {
   calEnsure(id) { done(id, null, null); },
   calFetch(id, from, to) {
     done(id, null, JSON.stringify({ events: [
-      { title: '鸿蒙晨跑', date: '2026-09-22', allDay: false, start: '07:30', end: '08:00', rruleStr: 'FREQ=DAILY;INTERVAL=1', sourceUid: 'h1' },
-      { title: '发布会', date: '2026-09-25', allDay: true, start: '', end: '', desc: 'HDC', location: '', sourceUid: 'h2' },
+      { title: '鸿蒙晨跑', date: '2026-09-22', allDay: false, start: '07:30', end: '08:00', rruleStr: 'FREQ=DAILY;INTERVAL=1', sourceUid: 'hos:11', calAcct: 'huawei@cloud.com', calDisp: '华为日历' },
+      { title: '发布会', date: '2026-09-25', allDay: true, start: '', end: '', desc: 'HDC', location: '', sourceUid: 'hos:12', calAcct: 'huawei@cloud.com', calDisp: '华为日历' },
     ] }));
   },
   calWrite(id, json) { const o = JSON.parse(json); done(id, null, JSON.stringify({ upserted: o.events.length, removed: 0 })); },
+  calEdit(id, json) { editCalls.push(JSON.parse(json)); done(id, null, JSON.stringify({ updated: 1, calendar: '华为日历' })); },
   calOpen(id) { done(id, null, null); },
   deviceId(id) { done(id, null, '{"id":"native-device-1"}'); },
 };
@@ -134,14 +136,24 @@ const ok = (name, cond) => eq(name, !!cond, true);
   /* ---------- 4. 日历桥 ---------- */
   ok('cal: available()', CalBridge.available());
   await CalBridge.ensurePermission();
-  const evs = await CalBridge.fetchEvents(0, 9e15);
+  const fetched = await CalBridge.fetchEvents(0, 9e15);
+  const evs = fetched.events;
   eq('cal: 拉取条数', evs.length, 2);
   eq('cal: rrule 字符串解析为规则', evs[0].rrule && evs[0].rrule.freq, 'DAILY');
+  eq('cal: 外来日程带上原日历归属', evs[0].calDisp, '华为日历');
   const run = IcsParser.expandOccurrences(evs[0], '2026-09-22', '2026-09-24');
   eq('cal: 展开每日重复', run.length, 3);
   const wr = await CalBridge.writeBack(Object.values(Store.get('ABCD1234').events));
   ok('cal: 回写 upsert 数>0', wr.upserted > 0);
   await CalBridge.openSettings();
+
+  /* ---------- 4b. 外来日程按条写回原日历：只认 hos:/cal: 句柄，自建的返回 false ---------- */
+  eq('cal: 鸿蒙句柄解析', CalBridge.sysHandle('hos:11'), { calId: '', id: '11' });
+  eq('cal: 安卓句柄解析', CalBridge.sysHandle('cal:7:42'), { calId: '7', id: '42' });
+  eq('cal: 自建日程无原生日历句柄', CalBridge.sysHandle('e1'), null);
+  ok('cal: 写回原日历走 calEdit', await CalBridge.editSystemEvent(evs[0], 1e12));
+  eq('cal: calEdit 收到条目编号与原日历', [editCalls[0].evId, editCalls[0].calDisp], ['11', '华为日历']);
+  eq('cal: 自建的日程不写回系统日历', await CalBridge.editSystemEvent({ title: 'x', date: '2026-09-22' }, 0), false);
 
   /* ---------- 5. 同步状态机：干净时也要拉取远端（新成员/新日程能显示） ---------- */
   const s5 = Store.createSpace('SYNC5', '五人房');

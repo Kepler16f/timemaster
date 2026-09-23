@@ -5,9 +5,10 @@ const TM_PREFIX = 'TimeMaster:';
 const DAY_MS = 86400000;
 /* CalendarKit 的 napi 层按字面量取键名，用数字常量避开不同 SDK 版本枚举名差异 */
 const EVENT_TYPE_NORMAL = 0;
-/* READ_WHOLE_CALENDAR 是受限开放权限（API 20 起才对普通应用开放，且要签名 profile 带 ACL），
-   常规构建没声明它，去请求会连累普通权限一起失败。CI 的实验构建分支会把这里改成 true 再构建。 */
-const WHOLE_CAL = false;
+/* READ/WRITE_WHOLE_CALENDAR 是受限开放权限（API 20 起对普通应用开放，且要求签名 profile 的
+   allowed-acls 带上这两条）。清单里常驻声明；拿不到授权时 ensure 降级、只当没有跨日历能力 */
+const PERM_READ_WHOLE: Permissions = ('ohos.permission.READ_WHOLE_CALENDAR' as Object) as Permissions;
+const PERM_WRITE_WHOLE: Permissions = ('ohos.permission.WRITE_WHOLE_CALENDAR' as Object) as Permissions;
 
 interface BizErr {
   message?: string;
@@ -80,6 +81,22 @@ interface WirePayload {
   events?: WireEv[];
 }
 
+/* 编辑「别人日历里的日程」的入参：origMs 是它改动前的开始时间，用来框定回查范围 */
+interface EditReq {
+  calAcct?: string;
+  calDisp?: string;
+  evId?: number;
+  origMs?: number;
+  title?: string;
+  date?: string;
+  endDate?: string;
+  allDay?: boolean;
+  start?: string;
+  end?: string;
+  desc?: string;
+  location?: string;
+}
+
 interface OutEv {
   id?: string;
   title: string;
@@ -91,6 +108,9 @@ interface OutEv {
   desc: string;
   location: string;
   sourceUid: string;
+  /* 编辑要写回它原来所在的日历，靠这两个字段把归属带回原生侧 */
+  calAcct?: string;
+  calDisp?: string;
 }
 
 function pad(n: number): string {
@@ -123,6 +143,27 @@ function buildEvent(title: string, w: WireEv, marker: string, startMs: number, e
     'startTime': startMs,
     'endTime': endMs,
     'description': marker + '|' + (w.desc || ''),
+  };
+  if (w.allDay) {
+    ev['isAllDay'] = true;
+  }
+  const loc: string = w.location || '';
+  if (loc.length > 0) {
+    const l: Record<string, Object> = { 'location': loc };
+    ev['location'] = l;
+  }
+  return ev as Object as calendarManager.Event;
+}
+
+/* 改的是别人日历里的条目，description 按用户填的内容原样写回，
+   绝不能盖 TM_PREFIX——否则 writeBack 会把它当本应用自建日程清理掉 */
+function editEvent(w: EditReq, startMs: number, endMs: number): calendarManager.Event {
+  const ev: Record<string, Object> = {
+    'title': w.title || '未命名',
+    'type': EVENT_TYPE_NORMAL,
+    'startTime': startMs,
+    'endTime': endMs,
+    'description': w.desc || '',
   };
   if (w.allDay) {
     ev['isAllDay'] = true;
@@ -169,6 +210,54 @@ function calName(cal: calendarManager.Calendar): string {
   }
 }
 
+interface CalAcc {
+  name: string;
+  display: string;
+}
+
+/* 回写原日历要靠这对键找回同一个 Calendar 实例：getAllCalendars 每次是新对象，
+   只有 account 是稳定的。读和写用同一个取值口径，才不会定位漂到别的日历上 */
+function calAcc(cal: calendarManager.Calendar): CalAcc {
+  try {
+    const acc = cal.getAccount();
+    return { name: acc.name || '', display: acc.displayName || '' };
+  } catch (e) {
+    return { name: '', display: '' };
+  }
+}
+
+async function findCal(ctx: common.UIAbilityContext, acct: CalAcc): Promise<calendarManager.Calendar> {
+  const cals = await allCals(ctx);
+  for (const cal of cals) {
+    const got: CalAcc = calAcc(cal);
+    if (got.name === acct.name && got.display === acct.display) {
+      return cal;
+    }
+  }
+  throw new Error('找不到原来的日历「' + (acct.display || acct.name || '未命名') + '」，它可能已被删除');
+}
+
+/* 回查原日程：先按改动前的时间小范围找，找不到再放宽到两年。
+   一上来就拉超大区间的 getEvents 在老设备上会超时 */
+async function findExisting(cal: calendarManager.Calendar, evId: number, aroundMs: number): Promise<void> {
+  const windows: number[] = [7, 730];
+  let why: string = '原日历里查不到这条日程';
+  for (const days of windows) {
+    try {
+      const list = await cal.getEvents(timeFilter(aroundMs - days * DAY_MS, aroundMs + days * DAY_MS));
+      for (const raw of list) {
+        const e = raw as Object as EvShape;
+        if (e.id === evId) {
+          return;
+        }
+      }
+    } catch (e) {
+      why = errText(e as Object);
+    }
+  }
+  throw new Error(why + '，可能已被删除');
+}
+
 export class HarmonyCalendar {
   static async ensure(ctx: common.UIAbilityContext | null): Promise<void> {
     if (ctx === null) {
@@ -181,15 +270,13 @@ export class HarmonyCalendar {
     if (!ok) {
       throw new Error('未获得日历权限');
     }
-    if (WHOLE_CAL) {
-      /* 实验构建才走到这里：再要一次「读取全部日历」。拿不到（profile 没带 ACL、用户拒绝）也只记日志，
-         退化成「只能读本应用自己写的日程」，与常规构建行为一致 */
-      const whole: Permissions[] = [('ohos.permission.READ_WHOLE_CALENDAR' as Object) as Permissions];
-      try {
-        await at.requestPermissionsFromUser(ctx, whole);
-      } catch (e) {
-        console.warn('whole calendar permission unavailable: ' + errText(e as Object));
-      }
+    /* 跨日历读写靠这两条受限权限；profile 没带 ACL 或用户拒绝时只记日志，
+       退化成「只能读本应用自己写的日程」，不连累上面两条基础权限 */
+    const whole: Permissions[] = [PERM_READ_WHOLE, PERM_WRITE_WHOLE];
+    try {
+      await at.requestPermissionsFromUser(ctx, whole);
+    } catch (e) {
+      console.warn('whole calendar permission unavailable: ' + errText(e as Object));
     }
   }
 
@@ -204,6 +291,7 @@ export class HarmonyCalendar {
     let skipped = 0;
     for (const cal of cals) {
       const label: string = calName(cal);
+      const acc: CalAcc = calAcc(cal);
       const stat: CalStat = { name: label, events: 0, error: '' };
       let list: calendarManager.Event[] = [];
       try {
@@ -244,6 +332,8 @@ export class HarmonyCalendar {
           desc: desc,
           location: e.location?.location || '',
           sourceUid: 'hos:' + String(e.id),
+          calAcct: acc.name,
+          calDisp: acc.display,
         };
         if (allDay && dur > DAY_MS + 1000) {
           item.endDate = toDateStr(en - 1);
@@ -335,6 +425,36 @@ export class HarmonyCalendar {
       failed: fails.length,
       error: fails.length > 0 ? fails[0] : '',
     });
+  }
+
+  /* 把改动写回这条日程原来所在的日历。只 update、不 delete：
+     别的 App 建的日程不允许被本应用删除，删除入口在 Web 层就不给 */
+  static async editOne(ctx: common.UIAbilityContext | null, payloadJson: string): Promise<string> {
+    if (ctx === null) {
+      throw new Error('上下文未就绪');
+    }
+    const w = JSON.parse(payloadJson) as EditReq;
+    const evId: number = Number(w.evId) || 0;
+    if (evId <= 0) {
+      throw new Error('缺少要修改的日程编号');
+    }
+    const cal = await findCal(ctx, { name: w.calAcct || '', display: w.calDisp || '' });
+    const dateStr: string = w.date || '';
+    if (!dateStr) {
+      throw new Error('缺少日期');
+    }
+    const startMs: number = w.allDay
+      ? fromLocal(dateStr, '00:00')
+      : fromLocal(dateStr, w.start || '00:00');
+    let endMs: number = w.allDay
+      ? (w.endDate ? fromLocal(w.endDate, '00:00') + DAY_MS - 1000 : startMs + DAY_MS - 1000)
+      : (w.end ? fromLocal(dateStr, w.end) : startMs + 3600000);
+    if (endMs <= startMs) {
+      endMs += DAY_MS;
+    }
+    await labeled('确认原日程仍在', () => findExisting(cal, evId, Number(w.origMs) || startMs));
+    await labeled('写回「' + calName(cal) + '」', () => cal.updateEvent(evId, editEvent(w, startMs, endMs)));
+    return JSON.stringify({ updated: 1, calendar: calName(cal) });
   }
 
   static async openSettings(ctx: common.UIAbilityContext | null): Promise<void> {
