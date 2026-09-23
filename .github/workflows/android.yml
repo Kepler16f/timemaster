@@ -2,7 +2,16 @@ name: Android CI
 
 on:
   push:
-    branches: [main]
+    # 分支提交按改动路径分流：只改了鸿蒙那边就不必重跑安卓构建。
+    # 标签触发单独一条、不带路径过滤 —— 发版标签的 diff 可能只含版本号，会被过滤掉。
+    branches:
+      - paths:
+          - 'public/**'
+          - 'android-shell/**'
+          - 'package*.json'
+          - 'capacitor.config.ts'
+          - '.github/workflows/android.yml'
+        branches: [main]
     tags: ['v*']
   # 手动运行时可勾选 publish，才会发 GitHub Release；push 只构建产物
   workflow_dispatch:
