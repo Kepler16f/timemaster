@@ -362,6 +362,8 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .set-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-weak); }
 /* flex-direction 要显式写：全局 `label{flex-direction:column}` 会让「文字 + 勾选框」的 .set-row 竖排 */
 .set-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; font-size: 15px; }
+/* 行内的「文字 + 勾选框」也要横排：全局 `label{flex-direction:column}` 会把它竖着掰开 */
+.set-inline { display: flex; flex-direction: row; align-items: center; gap: 10px; }
 .set-val { color: var(--text-weak); font-size: 14px; }
 .set-note { font-size: 12px; color: var(--text-weak); line-height: 1.65; }
 .set-actions { display: flex; gap: 14px; }

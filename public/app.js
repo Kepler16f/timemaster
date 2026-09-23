@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.2.5';
+const APP_VERSION = '0.2.6';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）

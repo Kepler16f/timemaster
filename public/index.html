@@ -180,8 +180,10 @@
           <button type="button" class="seg-btn" data-val="light">浅色</button>
           <button type="button" class="seg-btn" data-val="dark">深色</button>
         </div>
-        <label class="set-row" for="dayViewSw"><span>日视图</span><input type="checkbox" id="dayViewSw"></label>
-        <div class="set-row"><span>默认视图</span></div>
+        <div class="set-row">
+          <label class="set-inline" for="dayViewSw"><span>日视图</span><input type="checkbox" id="dayViewSw"></label>
+          <span>默认视图</span>
+        </div>
         <div class="seg" id="defViewSeg">
           <button type="button" class="seg-btn" data-val="last">跟随上次</button>
           <button type="button" class="seg-btn" data-val="month">月</button>
@@ -192,7 +194,7 @@
 
       <div class="set-group">
         <div class="set-title">关于</div>
-        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.5</span></div>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.6</span></div>
         <div id="updGroup" hidden style="display:flex;flex-direction:column;gap:14px">
           <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
           <div class="set-actions">
