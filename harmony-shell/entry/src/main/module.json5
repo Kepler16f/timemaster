@@ -12,7 +12,8 @@
       {
         "name": "EntryAbility",
         "srcEntry": "./ets/entryability/EntryAbility.ets",
-        "launchType": "standard",
+        /* 单实例：standard 会每次从桌面启动都新建一个 Ability，最近任务里就多一张卡片 */
+        "launchType": "singleton",
         /* 手机/平板跟随系统的自动旋转开关；不写时默认按 unspecified 处理，手机上常被锁成竖屏 */
         "orientation": "auto_rotation_restricted",
         "description": "$string:ability_desc",

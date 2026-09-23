@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.2.4';
+const APP_VERSION = '0.2.5';
 const VIEW_KEY = 'tm:view';
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
@@ -336,7 +336,8 @@ $('#spaceSave').onclick=async()=>{
       const name=$('#spaceNameInput').value.trim()||'共享日程';
       const code=genCode();
       const data=Store.createSpace(code,name);
-      await Dav.put(code, JSON.stringify(data), null);
+      const p=await Dav.put(code, JSON.stringify(data), null); /* 仅新建：已存在就是撞码，不能覆盖别人的空间 */
+      if(p.status===412){ toast('邀请码刚好撞车了，请再点一次创建'); return; }
       Store.upsertSpaceMeta(code,name);
       $('#spaceModal').hidden=true;
       await enterSpace(code);
@@ -351,19 +352,13 @@ $('#spaceSave').onclick=async()=>{
 };
 async function joinSpace(code){
   if(!needDav()) return;
-  let { data, etag } = await Store.openRemote(code);
-  if(data.members[myId()]) { toast('你已在该空间'); }
-  else {
-    Store.joinMember(data);
-    let p = await Dav.put(code, JSON.stringify(data), etag);
-    if(p.status===412){ // 并发加入：重拉合并再写一次
-      const fresh = await Store.openRemote(code);
-      Store.joinMember(fresh.data);
-      p = await Dav.put(code, JSON.stringify(fresh.data), fresh.etag);
-      if(p.status===412) throw new Error('空间正被修改，请稍后重试');
-    }
-  }
-  Store.upsertSpaceMeta(code, data.name||'共享空间');
+  /* 加入不再自己 PUT 整篇文档：先合并进本机缓存，写回交给 syncCode（它在覆盖前会重新拉全量合并），
+     否则后来的人会把前一个人刚写进去的成员/日程一起盖掉 */
+  const { data, etag } = await Store.openRemote(code);
+  await Store.attach(code, data, etag);
+  const isNew = Store.ensureMember(code); // 已在成员表里就不产生额外写入
+  Store.upsertSpaceMeta(code, (Store.get(code) || data).name || '共享空间');
+  if(!isNew) toast('你已在该空间');
   await enterSpace(code);
 }
 
@@ -548,8 +543,10 @@ async function enterSpace(code){
   state.code=code;
   localStorage.setItem('tm:lastSpace', code); // 下次冷启动直接回到这个空间
   state.day=todayStr(); syncYm();
-  const data = Store.get(code) || (await Store.openRemote(code)).data;
-  await Store.attach(code, data);
+  let data = Store.get(code), etag;
+  if(!data){ const remote = await Store.openRemote(code); data = remote.data; etag = remote.etag; }
+  await Store.attach(code, data, etag);
+  Store.ensureMember(code); /* 被别人用旧版本覆盖掉时，回到空间就先把自己补回成员表 */
   Store.dedupe(code);
   $('#spaceName').textContent=data.name||'共享日程';
   $('#codeText').textContent=code;
