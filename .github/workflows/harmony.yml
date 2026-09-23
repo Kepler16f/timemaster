@@ -129,9 +129,13 @@ jobs:
               -appCertFile signature/release.cer -profileFile signature/release.p7b
           fi
 
+      - name: 实验产物改名（与正式通道区分）
+        if: ${{ github.event.inputs.whole_calendar == 'true' }}
+        run: for f in timemaster-*.hap; do mv "$f" "readwhole-$f"; done
+
       - uses: actions/upload-artifact@v7
         with:
-          name: ${{ github.event.inputs.whole_calendar == 'true' && 'timemaster-readwhole-experimental.hap' || 'timemaster.hap' }}
+          name: timemaster.hap
           path: timemaster-*.hap
           archive: false
 
