@@ -8,6 +8,10 @@ on:
         description: 发布为 GitHub Release（不勾则只留 Actions 产物）
         type: boolean
         default: false
+      whole_calendar:
+        description: 实验构建：升 API 20 SDK 并声明 READ_WHOLE_CALENDAR（产物单独命名，绝不发版）
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -18,7 +22,7 @@ on:
 
 env:
   # 社区公开镜像（ErBWs/setup-ohos 自动从 ErBWs/ohos-sdk Releases 拉取，免登录、带 sha256 校验）
-  CLT_VERSION: 5.0.13.200
+  CLT_VERSION: ${{ github.event.inputs.whole_calendar == 'true' && '6.1.1.280' || '5.0.13.200' }}
 
 permissions:
   contents: write
@@ -52,6 +56,44 @@ jobs:
           # hvigor 命令行构建要求 DEVECO_SDK_HOME 指向含 default/ 的 sdk 根
           echo "DEVECO_SDK_HOME=$HOS_SDK_HOME" >> "$GITHUB_ENV"
           echo "@ohos:registry=https://repo.harmonyos.com/npm/" >> "$HOME/.npmrc"
+
+      - name: 实验分支：升到 API 20 并声明 READ_WHOLE_CALENDAR
+        if: ${{ github.event.inputs.whole_calendar == 'true' }}
+        run: |
+          # READ_WHOLE_CALENDAR 是受限开放权限：API 20 起才对普通应用开放，且要求签名 profile 带 ACL。
+          # 所以只在这条实验分支上临时改清单，产物另存一个名字，正式通道不受影响。
+          python3 - <<'PY'
+          import io
+          nl = chr(10)
+          bp = 'harmony-shell/build-profile.json5'
+          s = io.open(bp, encoding='utf-8').read()
+          s = s.replace('"compatibleSdkVersion": "5.0.0(12)"', '"compatibleSdkVersion": "6.0.0(20)"')
+          io.open(bp, 'w', encoding='utf-8').write(s)
+          for p in ('harmony-shell/hvigor/hvigor-config.json5', 'harmony-shell/oh-package.json5'):
+              s = io.open(p, encoding='utf-8').read().replace('"modelVersion": "5.0.0"', '"modelVersion": "6.0.0"')
+              io.open(p, 'w', encoding='utf-8').write(s)
+          mj = 'harmony-shell/entry/src/main/module.json5'
+          s = io.open(mj, encoding='utf-8').read()
+          anchor = '"name": "ohos.permission.READ_CALENDAR"'
+          extra = nl.join([
+              '"name": "ohos.permission.READ_WHOLE_CALENDAR",',
+              '"reason": "$string:calendar_reason",',
+              '"usedScene": { "abilities": ["EntryAbility"], "when": "inuse" }',
+              '      },',
+              '      {',
+              anchor,
+          ])
+          assert anchor in s, 'module.json5 里没找到 READ_CALENDAR 声明'
+          s = s.replace(anchor, extra, 1)
+          io.open(mj, 'w', encoding='utf-8').write(s)
+          hc = 'harmony-shell/entry/src/main/ets/bridge/HarmonyCalendar.ets'
+          s = io.open(hc, encoding='utf-8').read()
+          assert 'const WHOLE_CAL = false;' in s, 'HarmonyCalendar.ets 里没找到 WHOLE_CAL 开关'
+          s = s.replace('const WHOLE_CAL = false;', 'const WHOLE_CAL = true;')
+          io.open(hc, 'w', encoding='utf-8').write(s)
+          PY
+          grep -n 'CALENDAR' harmony-shell/entry/src/main/module.json5
+          grep -n 'compatibleSdkVersion' harmony-shell/build-profile.json5
 
       - name: Sync web assets into rawfile
         run: node scripts/sync-harmony-web.mjs
@@ -89,7 +131,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: timemaster.hap
+          name: ${{ github.event.inputs.whole_calendar == 'true' && 'timemaster-readwhole-experimental.hap' || 'timemaster.hap' }}
           path: timemaster-*.hap
           archive: false
 
@@ -98,6 +140,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # 实验构建（声明了受限权限，profile 没带 ACL 时装不上）一律不进 Release
+          if [ "${{ github.event.inputs.whole_calendar }}" = "true" ]; then
+            echo "实验分支构建：只留产物，不发 Release"
+            exit 0
+          fi
           # 发不发 Release 由人决定：push 触发的构建只留 Actions 产物，
           # 要发版就手动运行本工作流并把 publish 勾上
           if [ "${{ inputs.publish }}" != "true" ]; then

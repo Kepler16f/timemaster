@@ -1077,18 +1077,25 @@ function fillImportOwner(){
   });
   sel.value=myId();
 }
-$('#importBtn').onclick=()=>{ if(!state.code) return toast('请先进入一个空间'); fillImportOwner(); $('#permBtn').hidden=true; $('#importModal').hidden=false; };
+$('#importBtn').onclick=()=>{ if(!state.code) return toast('请先进入一个空间'); fillImportOwner(); $('#permBtn').hidden=true; $('#harCalTip').hidden=!CalBridge.isHarmony(); $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
 $('#permBtn').onclick=()=>CalBridge.openSettings();
+/* 读不到日程时，把原生侧报来的「扫了哪些日历、各读到几条、哪个报错」摊开说，省得猜真机现场 */
+function importEmptyMsg(r){
+  const cals=(r.debug?.calendars||[]).map((c)=> c.error ? `${c.name}：读取出错 ${c.error}` : `${c.name}：${c.events} 条`).join('；');
+  const dbg = r.debug ? `（扫了 ${r.debug.scanned} 个日历：${cals||'一个都没有'}）` : '';
+  const head = r.raw ? `读到的 ${r.raw} 条都是本应用回写出去的日程，已跳过` : '系统日历中近一年没有可读到的日程';
+  return head + dbg + (r.debug ? '。鸿蒙上应用只能读到本应用自己写的日程，可用弹窗里的「从 .ics 文件导入」' : '');
+}
 $('#sysImportBtn').onclick=async()=>{
   if(!state.code) return;
   try{
     await CalBridge.ensurePermission();
     toast('正在读取系统日历…');
     const now=Date.now(), YEAR=365*86400000;
-    const list=await CalBridge.fetchEvents(now-YEAR, now+YEAR);
-    if(!list.length) return toast('系统日历中近一年没有日程');
-    const n=Store.addEvents(state.code, list, $('#importOwner').value||myId());
+    const r=await CalBridge.fetchEvents(now-YEAR, now+YEAR);
+    if(!r.events.length) return toast(importEmptyMsg(r));
+    const n=Store.addEvents(state.code, r.events, $('#importOwner').value||myId());
     toast(n ? `已导入 ${n} 条系统日程（重复的已自动跳过）` : '没有新日程，之前都已导入过');
     $('#importModal').hidden=true;
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }

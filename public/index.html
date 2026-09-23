@@ -383,6 +383,9 @@
     <div class="modal">
       <h3>系统日历导入 / 回写</h3>
       <button class="big-btn ghost" id="sysImportBtn">📥 直接读取系统日历并导入</button>
+      <!-- 鸿蒙的 READ_CALENDAR 只放行「本应用创建的日程」，读别人建的日程要系统级 READ_WHOLE_CALENDAR，
+           三方应用拿不到；这里如实说明并把 .ics 路径递给用户，免得反复点按钮猜原因 -->
+      <p class="import-tip" id="harCalTip" hidden>鸿蒙限制：应用只能读到本应用写入的日程，你在系统日历里手动建的那些读不到。可用下面「从 .ics 文件导入」搬进来。</p>
       <button class="big-btn ghost" id="writeBackBtn">📤 把空间日程回写到系统日历</button>
       <button class="big-btn ghost warn hidden" id="permBtn">⚠️ 日历权限未开启，点击去系统设置</button>
       <details class="export-help">
