@@ -6,6 +6,7 @@ const APP_VERSION = '0.2.5';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）
+const DEFVIEW_KEY = 'tm:defView'; // 进入空间时默认用哪个视图：last=跟随上次
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
 window.__setSafeInsets = function (topPx, bottomPx) {
@@ -65,6 +66,7 @@ const state = {
   month: new Date().getMonth() + 1,
   view: localStorage.getItem(VIEW_KEY) || 'month',
   dayView: localStorage.getItem(DAYVIEW_KEY) === '1',
+  defView: localStorage.getItem(DEFVIEW_KEY) || 'last',
   weekFit: localStorage.getItem(WEEK_FIT_KEY) === '7' ? 7 : 4,
   visible: {},
   spaceMode: 'create',
@@ -102,17 +104,30 @@ if (darkMQ.addEventListener) darkMQ.addEventListener('change', () => { if ((loca
 /* 日视图默认收起：不常用的人不必在视图条上看见那一格 */
 function syncDayView(){
   const on = state.dayView;
-  const btn = $('#viewSeg [data-val="day"]');
-  if (btn) btn.classList.toggle('hidden', !on);
+  ['#viewSeg [data-val="day"]', '#defViewSeg [data-val="day"]'].forEach((sel) => {
+    const btn = $(sel);
+    if (btn) btn.classList.toggle('hidden', !on);
+  });
   const sw = $('#dayViewSw');
   if (sw) sw.checked = on;
+  /* 「默认视图」和「日视图开关」要自洽：选了日又关掉日视图，就退回跟随上次 */
+  if (!on && state.defView === 'day') { state.defView = 'last'; localStorage.setItem(DEFVIEW_KEY, 'last'); }
   if (!on && state.view === 'day') { state.view = 'week'; localStorage.setItem(VIEW_KEY, 'week'); }
+  document.querySelectorAll('#defViewSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.val === state.defView));
 }
 $('#dayViewSw').onchange = (e) => {
   state.dayView = e.target.checked;
   localStorage.setItem(DAYVIEW_KEY, e.target.checked ? '1' : '0');
   syncDayView();
   renderCalendar(true);
+};
+$('#defViewSeg').onclick = (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  state.defView = b.dataset.val;
+  localStorage.setItem(DEFVIEW_KEY, b.dataset.val);
+  syncDayView();
+  if (b.dataset.val !== 'last') setView(b.dataset.val); // 立刻给个反馈，不用等下次进入空间
 };
 /* 鸿蒙 ArkWeb 里系统深色模式在应用切回前台时才保证同步过来，媒体查询事件不一定触发 */
 document.addEventListener('visibilitychange', () => { if (!document.hidden) applyTheme(); });
@@ -533,6 +548,7 @@ $('#clearOk').onclick=async()=>{
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
   state.code=code;
+  if(state.defView!=='last'){ state.view=state.defView; localStorage.setItem(VIEW_KEY,state.view); } /* 设置里指定的默认视图 */
   localStorage.setItem('tm:lastSpace', code); // 下次冷启动直接回到这个空间
   state.day=todayStr(); syncYm();
   let data = Store.get(code), etag;
@@ -937,16 +953,32 @@ function setMonthCollapsed(v){
   renderCalendar();
 }
 $('#monthToggle').onclick=()=>setMonthCollapsed(!state.monthCollapsed);
+/* 横滑切视图：月→周→日（反向亦然），不必每次去点顶栏的切换钮。
+   周视图「一屏四格」时横向本来是时间轴自己在滚，这个手势让给它：
+   只有滚动位置没变（内容不宽 / 已滑到边界）才当作切视图 */
+function shiftView(dir){
+  const order=['month','week','day'].filter((v)=> v!=='day' || state.dayView);
+  const i=order.indexOf(state.view);
+  if(i<0) return;
+  const j=i+dir;
+  if(j>=0 && j<order.length) setView(order[j]);
+}
 let mSwipe=null;
 $('#calMain').addEventListener('touchstart',(e)=>{
-  if(state.view!=='month' || window.innerWidth>=600 || e.touches.length!==1) { mSwipe=null; return; }
-  mSwipe={ y:e.touches[0].clientY, x:e.touches[0].clientX, top:$('#calMain').scrollTop };
+  if(e.touches.length!==1){ mSwipe=null; return; }
+  const t=e.touches[0];
+  mSwipe={ y:t.clientY, x:t.clientX, sl:$('#calendar').scrollLeft };
 },{passive:true});
 $('#calMain').addEventListener('touchend',(e)=>{
   if(!mSwipe) return;
   const t=e.changedTouches[0], dy=t.clientY-mSwipe.y, dx=t.clientX-mSwipe.x;
-  /* 只在明显竖向滑动时判断，避免和横翻月份/滚动列表抢手势 */
-  if(Math.abs(dy)>48 && Math.abs(dy)>Math.abs(dx)*1.5) setMonthCollapsed(dy<0);
+  const ax=Math.abs(dx), ay=Math.abs(dy);
+  const cal=$('#calendar');
+  if(ax>70 && ax>ay*1.6){
+    if(!cal || cal.scrollLeft===mSwipe.sl) shiftView(dx<0?1:-1);
+  } else if(state.view==='month' && window.innerWidth<600 && ay>48 && ay>ax*1.5){
+    setMonthCollapsed(dy<0);
+  }
   mSwipe=null;
 },{passive:true});
 

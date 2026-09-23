@@ -360,7 +360,8 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .set-group { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.05); display: flex; flex-direction: column; gap: 16px; }
 .set-title { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; }
 .set-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-weak); }
-.set-row { display: flex; justify-content: space-between; align-items: center; font-size: 15px; }
+/* flex-direction 要显式写：全局 `label{flex-direction:column}` 会让「文字 + 勾选框」的 .set-row 竖排 */
+.set-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; font-size: 15px; }
 .set-val { color: var(--text-weak); font-size: 14px; }
 .set-note { font-size: 12px; color: var(--text-weak); line-height: 1.65; }
 .set-actions { display: flex; gap: 14px; }
