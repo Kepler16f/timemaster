@@ -9,6 +9,30 @@
   /* 身份键：登录账户后跨设备一致，未登录回退设备 id */
   function myId() { return (window.Auth && Auth.memberKey()) || App.clientId; }
 
+  /* 「我」往往不止一个键：登录/退出邮箱、设备号被原生存储接管、网页存储被系统清理，
+     都会让同一个人先后用不同的键写下日程。只认当前键的话，旧键那几条就成了
+     「别人创建的、无法删除」，所以把见过的自己的键都记一份，判定归属时全部算数。 */
+  function ownKeys() {
+    let a;
+    try { a = JSON.parse(localStorage.getItem('tm:myKeys') || '[]'); } catch (e) { a = []; }
+    return Array.isArray(a) ? a : [];
+  }
+  function noteKey(k) {
+    if (!k) return;
+    const a = ownKeys();
+    if (a.indexOf(k) >= 0) return;
+    localStorage.setItem('tm:myKeys', JSON.stringify(a.concat(k).slice(-16)));
+  }
+  function isMine(id, data) {
+    if (!id) return false;
+    noteKey(myId());
+    if (id === myId() || ownKeys().indexOf(id) >= 0) return true;
+    const m = data && data.members && data.members[id];
+    if (!m || m.name !== App.me.name) return false;
+    if (m.dev) return m.dev === App.clientId;         // 带设备号的新记录：同一台机器就是我的
+    return !!m.color && m.color === App.me.color;     // 没设备号的老记录：同昵称 + 同颜色认作同一人
+  }
+
   function stamp() {
     return { t: Date.now(), by: App.clientId };
   }
@@ -77,15 +101,32 @@
     return { name: App.me.name, color: App.me.color, dev: App.clientId, joinedAt: Date.now(), updatedAt: Date.now(), by: myId() };
   }
   /* 同一个人出现两条成员：身份键换过（登录/退出邮箱、设备号被原生存储接管、网页存储被系统清过）
-     就会留下旧键那一条，旧键名下没有日程，看起来就像空间里多出来一个人。
-     这里合并而不是删：只折掉「名下零日程」的重复项，本机自己那条永远保留，
-     免得把真有主人的记录并到别人身上。 */
+     就会留下旧键那一条，看起来像空间里多出来一个人，旧键名下的日程还会被当成别人写的而删不掉。
+     这里是合并而不是丢弃：先把「确认是我」的旧键名下日程并到当前身份键上，
+     再折掉名下零日程的重复项；本机自己那条永远保留。 */
   function foldMembers(code, data) {
     const c = loadLocal(code);
+    const mine = myId();
+    let changed = false;
+    /* 旧键名下还压着日程时，先把它们并到当前身份键上：只有「设备号 + 昵称都对得上」才敢改写归属，
+       改写后旧键自然变成零日程、被下面的折叠清掉，本人也不会再被「只有创建者可删」卡住 */
+    Object.keys(data.members).forEach((x) => {
+      if (x === mine) return;
+      const m = data.members[x];
+      if (!m || m.dev !== App.clientId || m.name !== App.me.name) return;
+      Object.keys(data.events).forEach((id) => {
+        const e = data.events[id];
+        if (e.ownerId !== x) return;
+        e.ownerId = mine;
+        e.updatedAt = Math.max(Date.now(), (e.updatedAt || 0) + 1);
+        e.by = App.clientId;
+        changed = true;
+      });
+      noteKey(x);
+    });
     const owned = {};
     for (const id in data.events) owned[data.events[id].ownerId] = (owned[data.events[id].ownerId] || 0) + 1;
     const ids = Object.keys(data.members);
-    const mine = myId();
     const same = (a, b) => {
       const m = data.members[a], n = data.members[b];
       if (!m || !n || !m.name || m.name !== n.name) return false;
@@ -94,7 +135,6 @@
     };
     /* 保留优先级：本机自己 > 名下日程多的 > 更早加入的 */
     const score = (id) => (id === mine ? 1e18 : 0) + (owned[id] || 0) * 1e15 - (data.members[id].joinedAt || 0);
-    let changed = false;
     ids.forEach((id) => {
       if (!data.members[id]) return; // 已被前一组折掉
       const group = ids.filter((x) => data.members[x] && same(id, x));
@@ -217,7 +257,7 @@
 
   function renameSpace(code, name) {
     const d = loadLocal(code).data;
-    if (!d || creatorId(d) !== myId()) return false;
+    if (!d || !isMine(creatorId(d), d)) return false;
     mutate(code, (dd) => { dd.name = name; dd.nameUpdatedAt = Date.now(); });
     const spaces = api.listSpaces();
     const s = spaces.find((x) => x.code === code);
@@ -323,7 +363,7 @@
     updateEvent(code, id, patch) {
       const d = loadLocal(code).data;
       if (!d || !d.events[id]) return false;
-      if (d.events[id].ownerId !== myId()) return false; // 仅创建者可改
+      if (!isMine(d.events[id].ownerId, d)) return false; // 仅创建者可改（换过身份键的旧记录也算自己）
       const s = stamp();
       mutate(code, (dd) => {
         const cur = dd.events[id];
@@ -337,7 +377,7 @@
     deleteEvent(code, id) {
       const d = loadLocal(code).data;
       if (!d || !d.events[id]) return false;
-      if (d.events[id].ownerId !== myId()) return false; // 仅创建者可删自己的日程
+      if (!isMine(d.events[id].ownerId, d)) return false; // 仅创建者可删自己的日程
       mutate(code, (dd) => {
         const ts = Math.max(Date.now(), (dd.events[id] ? dd.events[id].updatedAt : 0) + 1);
         dd.deletions[id] = ts;
@@ -349,7 +389,7 @@
     deleteEvents(code, ids) {
       const d = loadLocal(code).data;
       if (!d || !ids.length) return 0;
-      const mine = ids.filter((id) => d.events[id] && d.events[id].ownerId === myId());
+      const mine = ids.filter((id) => d.events[id] && isMine(d.events[id].ownerId, d));
       if (!mine.length) return 0;
       mutate(code, (dd) => {
         mine.forEach((id) => {
@@ -363,6 +403,7 @@
     /* 登录/绑定邮箱：把此前本地身份名下的成员资料与日程整体迁移到新身份，而不是另建一个账户 */
     migrateIdentity(oldKey, newKey) {
       if (!oldKey || !newKey || oldKey === newKey) return;
+      noteKey(oldKey); noteKey(newKey); // 换键前后的两个键都算自己的，漏迁的空间里旧日程也不会被认成别人的
       api.listSpaces().forEach((s) => {
         const d = loadLocal(s.code).data;
         if (!d) return;
@@ -402,7 +443,8 @@
       });
     },
     renameSpace,
-    canRename(code) { const d = loadLocal(code).data; return !!d && creatorId(d) === myId(); },
+    owns(id, data) { return isMine(id, data); },
+    canRename(code) { const d = loadLocal(code).data; return !!d && isMine(creatorId(d), d); },
   };
   window.Store = api;
 })();

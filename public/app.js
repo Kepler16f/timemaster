@@ -4,6 +4,7 @@
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
 const APP_VERSION = '0.2.5';
 const VIEW_KEY = 'tm:view';
+const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 
 /* 鸿蒙壳把状态栏/导航条避让区（物理像素）推进来，换算成 CSS px 写入 --sa-* */
 window.__setSafeInsets = function (topPx, bottomPx) {
@@ -62,6 +63,7 @@ const state = {
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
   view: localStorage.getItem(VIEW_KEY) || 'month',
+  weekFit: localStorage.getItem(WEEK_FIT_KEY) === '7' ? 7 : 4,
   visible: {},
   spaceMode: 'create',
   monthCollapsed: false,
@@ -442,7 +444,7 @@ $('#batchBtn').onclick=()=>{
 };
 function renderBatch(){
   const data=Store.get(state.code);
-  batchIds=Object.keys(data.events).map(k=>data.events[k]).filter(e=>e.ownerId===myId())
+  batchIds=Object.keys(data.events).map(k=>data.events[k]).filter(e=>Store.owns(e.ownerId,data))
     .sort((a,b)=>a.date.localeCompare(b.date)||String(a.start||'').localeCompare(String(b.start||'')))
     .map(e=>e.id);
   batchSel.clear();
@@ -595,7 +597,7 @@ function renderPeopleTags(){
     const on=memberOn(id);
     tag.className='person-tag'+(on?'':' off');
     tag.style.borderColor=m.color; tag.style.background=on?m.color+'22':'transparent';
-    tag.innerHTML=`<span class="dot" style="background:${m.color}"></span>${escapeHtml(m.name)}${id===myId()?'（我）':''}`;
+    tag.innerHTML=`<span class="dot" style="background:${m.color}"></span>${escapeHtml(m.name)}${Store.owns(id,data)?'（我）':''}`;
     tag.onclick=()=>{ state.visible[id]=!on; renderPeopleTags(); renderCalendar(); };
     wrap.appendChild(tag);
   });
@@ -732,7 +734,7 @@ function renderSpanBars(data, evs){
   ids.forEach((id)=>{
     const m=data.members[id]||{name:'未知',color:'#999'};
     const row=el('div','tl-row');
-    row.appendChild(el('span','tl-name',m.name+(id===myId()?'（我）':'')));
+    row.appendChild(el('span','tl-name',m.name+(Store.owns(id,data)?'（我）':'')));
     const track=el('span','tl-track');
     const spans=byOwner[id].map((e)=>[evStartMin(e),evEndMin(e)]);
     const lo=Math.min.apply(null,spans.map((s)=>s[0])), hi=Math.max.apply(null,spans.map((s)=>s[1]));
@@ -763,7 +765,7 @@ function evCard(data, e, ds){
   const main=el('div','ec-main');
   main.appendChild(el('div','ec-title', e.type==='normal'?e.title:(e.title+'（'+(e.type==='work'?'班':'休')+'）')));
   const meta=[];
-  meta.push(owner.name+(e.ownerId===myId()?'（我）':''));
+  meta.push(owner.name+(Store.owns(e.ownerId,data)?'（我）':''));
   if(e.rrule) meta.push(REPEAT_ZH[(e.rrule.freq||'').toUpperCase()]||'重复');
   if(e.location) meta.push(e.location);
   if(e.desc) meta.push(e.desc);
@@ -779,13 +781,36 @@ function renderTimeGrid(data, cal, days, fresh){
   /* 列宽走 --tg-colw：手机上算成「一屏五格」，多出的两格横向滑出来。
      --tg-n 同时喂给 CSS 的总宽 calc()，三层（表头/全天/正文）才不会滑着滑着错开 */
   cal.style.setProperty('--tg-n', String(days.length));
+  document.documentElement.style.setProperty('--tg-cols', String(state.weekFit));
+  cal.style.removeProperty('--tg-colw');
+  /* 收成整周一屏时列宽要「刚好塞下」：CSS 的 100vw 算不出竖向滚动条占掉的那十几像素，改成量出来的宽度 */
+  if(days.length===7 && state.weekFit===7 && window.innerWidth<600){
+    const avail=cal.clientWidth-40-7-2; /* 每格还有 1px 分隔线，一起扣掉才真的一屏放得下 */
+    if(avail>0) cal.style.setProperty('--tg-colw', Math.floor(avail/7)+'px');
+  }
   const colw=`minmax(var(--tg-colw,0px),1fr)`;
   const tpl=`var(--tg-gutter,40px) repeat(${days.length},${colw})`;
   const tStr=todayStr();
 
   const pin=el('div','tg-pin'); cal.appendChild(pin);
   const head=el('div','tg-head'); head.style.gridTemplateColumns=tpl;
-  head.appendChild(el('div','tg-corner','时'));
+  const corner=el('div','tg-corner');
+  corner.appendChild(el('span','tg-hlbl','时'));
+  if(days.length>1){
+    /* 角格上换掉「时」：点一下把整周收成七格，再点恢复一屏四格（选择记在本地） */
+    corner.classList.add('has-fit');
+    const fit=el('button','tg-fit', state.weekFit===7?'⤢':'⤡');
+    fit.type='button';
+    fit.title=fit.ariaLabel=state.weekFit===7?'展开为一屏四格':'收起为一屏七格';
+    fit.onclick=(ev)=>{
+      ev.stopPropagation();
+      state.weekFit = state.weekFit===7 ? 4 : 7;
+      localStorage.setItem(WEEK_FIT_KEY, String(state.weekFit));
+      renderCalendar();
+    };
+    corner.appendChild(fit);
+  }
+  head.appendChild(corner);
   days.forEach((ds)=>{
     const d=IcsParser.parseDate(ds);
     const c=el('div','tg-hcell'+(ds===tStr?' today':'')+(d.getDay()===0?' sun':d.getDay()===6?' sat':''));
@@ -938,7 +963,8 @@ function openDetail(ev, data, ds){
   $('#detailDot').style.background=owner.color;
   $('#detailTitle').textContent=ev.title;
   const lines=[];
-  lines.push(`成员：${owner.name}${ev.ownerId===myId()?'（我）':''}`);
+  const mine=Store.owns(ev.ownerId,data);
+  lines.push(`成员：${owner.name}${mine?'（我）':''}`);
   lines.push(`日期：${detailDate}${detailDate!==ev.date?'（原起于 '+ev.date+'）':''}${ev.endDate?' → '+ev.endDate:''}`);
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
   if(ev.allDay || !ev.start) lines.push('全天');
@@ -947,7 +973,6 @@ function openDetail(ev, data, ds){
   if(ev.location) lines.push(`地点：${ev.location}`);
   if(ev.desc) lines.push(`备注：${ev.desc}`);
   $('#detailMeta').innerHTML=lines.map(l=>`<div class="dm-row">${escapeHtml(l)}</div>`).join('');
-  const mine=ev.ownerId===myId();
   $('#detailDelete').classList.toggle('hidden', !mine);
   $('#detailEdit').classList.toggle('hidden', !mine);
   $('#detailLockNote').classList.toggle('hidden', mine);

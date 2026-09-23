@@ -197,8 +197,8 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 /* ---------- 日 / 周视图时间轴 ---------- */
 /* 时间轴自己做滚动容器：纵向滚 24 小时（表头吸顶），横向滑过七天（小时列吸左） */
 .calendar.tgrid { overflow: auto; padding: 0; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; scrollbar-width: thin; }
-/* 手机上七天平分每格放不下标题，改成一次看四天、左右滑动看满七天 */
-@media (max-width: 599px) { :root { --tg-colw: calc((100vw - var(--tg-gutter) - 22px)/4); } }
+/* 手机上默认一次看四天（左右滑动看满七天）；--tg-cols 由周视图角上的展开/收起按钮写成 4 或 7 */
+@media (max-width: 599px) { :root { --tg-colw: calc((100vw - var(--tg-gutter) - 22px)/var(--tg-cols, 4)); } }
 /* 三层（表头/全天/正文）必须等宽且同宽于轨道总宽，否则横向滑动时列会错开 */
 .tg-head, .tg-allday, .tg-body {
   width: calc(var(--tg-gutter) + var(--tg-n, 7) * var(--tg-colw)); min-width: 100%;
@@ -208,6 +208,13 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
   width: calc(var(--tg-gutter) + var(--tg-n, 7) * var(--tg-colw)); min-width: 100%; }
 .tg-head { display: grid; border-bottom: 1px solid var(--line); background: var(--card); }
 .tg-corner { display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 4px 4px 0; font-size: 10px; color: var(--weak2); position: sticky; left: 0; z-index: 8; background: var(--card); }
+/* 角格：手机竖屏的周视图放「四格/七格」切换按钮，其余情况仍显示「时」 */
+.tg-fit { display: none; appearance:none; -webkit-appearance:none; border:1px solid var(--line); background:var(--field-bg); color:var(--text-weak);
+  font-size:11px; line-height:1; padding:4px 6px; border-radius:8px; cursor:pointer; }
+@media (max-width: 599px) {
+  .tg-corner.has-fit .tg-fit { display: block; }
+  .tg-corner.has-fit .tg-hlbl { display: none; }
+}
 .tg-hcell { text-align: center; padding: 6px 0 5px; font-size: 12px; color: var(--text-weak); border-left: 1px solid var(--line); cursor: pointer; }
 .tg-hcell.sun { color: var(--accent); } .tg-hcell.sat { color: var(--sat); }
 .tg-hcell .dnum { display: inline-block; min-width: 24px; font-size: 16px; font-weight: 600; color: var(--text); border-radius: 12px; padding: 1px 4px; }
