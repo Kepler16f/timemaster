@@ -1,6 +1,6 @@
 {
   "app": {
-    "bundleName": "com.timemaster.app",
+    "bundleName": "top.timemaster.app",
     "vendor": "timemaster",
     "versionCode": 26,
     "versionName": "0.2.6",

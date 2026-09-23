@@ -5,7 +5,7 @@
 
 - 平台：Android 5.1+（minSdk 22，APK）与 HarmonyOS NEXT（API 12，HAP）
 - 版本：见 `public/app.js` 的 `APP_VERSION`；已发布的包在 [Releases](../../releases)
-- 包名：`com.timemaster.app`（历史原因保留，请勿修改，否则老设备无法覆盖安装）
+- 包名：Android `com.timemaster.app`（历史原因保留，请勿修改，否则老设备无法覆盖安装）；HarmonyOS `top.timemaster.app`（自 v0.2.6 起，改名的代价见 CHANGELOG）
 
 ---
 
