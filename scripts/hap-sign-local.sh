@@ -10,6 +10,9 @@
 #   HAP_JAVA HAP_SIGNTOOL HAP_P12 HAP_CER HAP_P7B HAP_KEY_ALIAS HAP_KEYSTORE_PWD HAP_KEY_PWD
 # 口令那两行留空也行：脚本会自己去本机签名配置（HAP_SIGN_CONFIG，默认
 # Documents/hap_installer/signConfig.json）里取，只读进内存、不打印也不入库。
+#
+# 每次签完会清理 .ci-dl 里的旧构建：只留最近 HAP_KEEP_VERSIONS（默认 3）个版本号的
+# reunion-v* 产物，更早的删掉。GitHub 上的 Release 不在这脚本动手范围内。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,8 +39,25 @@ done
 
 VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
 test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
-mkdir -p .ci-dl
-OUT=".ci-dl/reunion-v$VER-signed.hap"
+ART_DIR=".ci-dl"
+mkdir -p "$ART_DIR"
+OUT="$ART_DIR/reunion-v$VER-signed.hap"
+
+# 旧构建按版本号清理：文件名里的 reunion-v<版本> 就是分组依据
+prune_old_builds() {
+  keep="${HAP_KEEP_VERSIONS:-3}"
+  local vers keepre f v
+  # 版本号后面可能直接接后缀（-signed / -unsigned / -readwhole-experimental），也可能就是 .hap
+  vers=$(ls -1 "$ART_DIR" 2>/dev/null | sed -n 's/^reunion-v\([0-9][0-9.]*\)[.-].*/\1/p' | sort -uVr | head -"$keep")
+  [ -n "$vers" ] || return 0
+  keepre="|$(echo "$vers" | paste -sd'|' -)|"
+  for f in "$ART_DIR"/reunion-v*.hap "$ART_DIR"/reunion-v*.apk; do
+    [ -e "$f" ] || continue
+    v=$(basename "$f" | sed -n 's/^reunion-v\([0-9][0-9.]*\).*/\1/p')
+    case "$keepre" in *"|$v|"*) continue ;; esac
+    rm -f -- "$f" && echo "清理旧构建：$f"
+  done
+}
 
 IN="${1:-}"
 if [ -z "$IN" ]; then
@@ -48,7 +68,7 @@ if [ -z "$IN" ]; then
   ART=$(gh api "repos/$REPO/actions/runs/$RUN/artifacts" -q ".artifacts[] | select(.name==\"timemaster-unsigned.hap\") | .id" | head -1)
   test -n "$ART" || { echo "运行 $RUN 里没有 timemaster-unsigned.hap 产物"; exit 1; }
   echo "CI run $RUN / artifact $ART"
-  IN=".ci-dl/reunion-v$VER-unsigned.hap"
+  IN="$ART_DIR/reunion-v$VER-unsigned.hap"
   gh api "repos/$REPO/actions/artifacts/$ART/zip" > "$IN"
 fi
 
@@ -67,8 +87,11 @@ fi
   -signAlg SHA256withECDSA -compatibleVersion 20
 
 "$HAP_JAVA" -jar "$HAP_SIGNTOOL" verify-app -inFile "$OUT" \
-  -outCertChain .ci-dl/verify-certchain.cer -outProfile .ci-dl/verify-profile.p7b
+  -outCertChain "$ART_DIR/verify-certchain.cer" -outProfile "$ART_DIR/verify-profile.p7b"
 echo "已签名并校验通过：$OUT"
+
+# 签成功才清理，中途失败时旧产物还得留着排查
+prune_old_builds
 
 # 只有人在终端里敲着跑才可能上传；管道/CI 里跑一律只出本地产物
 if [ ! -t 0 ]; then
@@ -77,5 +100,5 @@ if [ ! -t 0 ]; then
 fi
 read -r -p "把它作为 reunion-v$VER.hap 传到 GitHub Release v$VER？[y/N] " OK
 [ "$OK" = "y" ] || { echo "没上传，产物留在 $OUT"; exit 0; }
-cp "$OUT" ".ci-dl/reunion-v$VER.hap"
-gh release upload "v$VER" ".ci-dl/reunion-v$VER.hap" --clobber
+cp "$OUT" "$ART_DIR/reunion-v$VER.hap"
+gh release upload "v$VER" "$ART_DIR/reunion-v$VER.hap" --clobber
