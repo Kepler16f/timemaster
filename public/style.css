@@ -391,17 +391,20 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .auth-card #lastSpaceBox { margin-bottom: 0; }
 .batch-list { max-height: 44vh; overflow: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 6px; scrollbar-width: none; }
 .batch-list::-webkit-scrollbar { display: none; }
-/* 成员管理：一行一人，角色徽章紧跟名字，日程数靠右；已退出的整行压暗 */
+/* 成员管理：一人一卡两行——昵称/身份/条数/时间并排，操作按钮另起一行居右。
+   昵称过长只让它自己横向滑动：单行硬挤时徽章和按钮会把名字压成 0 宽（真机上第二个人的名字就是这么没的） */
 .member-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow: auto; scrollbar-width: none; }
 .member-list::-webkit-scrollbar { display: none; }
-.member-row { display: flex; flex-direction: row; align-items: center; gap: 9px; font-size: 15px; color: var(--text); padding: 9px 12px; border-radius: 12px; background: var(--tint); min-width: 0; min-height: 46px; }
-/* 有「移出」按钮的那行原本会高出十几像素，把按钮收紧成和文字行同高，四行才对得齐 */
-.member-row .si-btn { padding: 4px 10px; font-size: 12px; border-radius: 8px; }
-/* 昵称一长，flex 就把徽章压成竖排两个字：角色标签必须整体不换行、不被压缩 */
+.member-row { display: flex; flex-direction: column; gap: 8px; font-size: 15px; color: var(--text); padding: 9px 12px; border-radius: 12px; background: var(--tint); min-width: 0; }
+.mr-top { display: flex; flex-direction: row; align-items: center; gap: 9px; min-height: 28px; min-width: 0; }
+.mr-btns { display: flex; flex-direction: row; justify-content: flex-end; gap: 10px; }
+.member-row .si-btn { padding: 5px 12px; font-size: 12.5px; border-radius: 8px; }
+/* 角色标签必须整体不换行、不被压缩 */
 .member-row .badge { white-space: nowrap; flex: 0 0 auto; }
 .member-row .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
-.mr-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mr-meta { margin-left: auto; flex: 0 0 auto; font-size: 12px; color: var(--text-weak); }
+.mr-name { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow-x: auto; scrollbar-width: none; }
+.mr-name::-webkit-scrollbar { display: none; }
+.mr-meta { margin-left: auto; flex: 0 0 auto; font-size: 12px; color: var(--text-weak); white-space: nowrap; }
 .badge.mr-role { background: var(--accent-soft); color: var(--accent); }
 .member-row.out { opacity: .55; }
 /* `.modal label` 的优先级比 .batch-row 高，会把手风琴式的 column 带进来——选择器得带上 .modal 才压得住 */

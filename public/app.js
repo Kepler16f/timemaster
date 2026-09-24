@@ -665,11 +665,15 @@ function renderMembers() {
   rows.forEach((m) => {
     const row = document.createElement('div');
     row.className = 'member-row' + (m.out ? ' out' : '');
-    row.innerHTML = `<span class="dot" style="background:${escapeHtml(m.color || '#999')}"></span>
+    /* 昵称/身份/条数/时间必须挤在同一行：昵称过长时自己横向滑，
+       绝不能被右边的徽章和按钮压到 0 宽（真机上第二个人的名字就是这么消失的） */
+    row.innerHTML = `<div class="mr-top"><span class="dot" style="background:${escapeHtml(m.color || '#999')}"></span>
       <span class="mr-name">${escapeHtml(m.name)}${m.mine ? '（我）' : ''}</span>
       <span class="badge${m.role !== 'member' ? ' mr-role' : ''}">${m.out ? (m.outBy && m.outBy !== m.id ? '已被移出' : '已退出') : ROLE_ZH[m.role]}</span>
-      <span class="mr-meta">${m.events} 条 · ${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '加入时间未知'}</span>`;
+      <span class="mr-meta">${m.events} 条 · ${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '加入时间未知'}</span></div>`;
     const act = Store.adminAction(memberCode, m.id);
+    const btns = document.createElement('div');
+    btns.className = 'mr-btns';
     if (act) {
       const btn = document.createElement('button');
       btn.className = 'si-btn'; btn.textContent = act === 'set' ? '设为管理员' : '取消管理员';
@@ -681,14 +685,15 @@ function renderMembers() {
           renderMembers();
         } catch (e) { toast(e.message); }
       };
-      row.appendChild(btn);
+      btns.appendChild(btn);
     }
     if (Store.canKick(memberCode, m.id)) {
       const btn = document.createElement('button');
       btn.className = 'si-btn danger'; btn.textContent = '移出';
       btn.onclick = () => openKickModal(m);
-      row.appendChild(btn);
+      btns.appendChild(btn);
     }
+    if (btns.childNodes.length) row.appendChild(btns);
     box.appendChild(row);
   });
   /* 日程已经清空的退出者：第二次打开面板只提这一句，第三次起连这句也没有了 */
