@@ -73,7 +73,7 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .brand h1 { font-size: 24px; margin-top: 6px; }
 .brand p { color: var(--text-weak); font-size: 13px; margin-top: 4px; }
 .seg { display: flex; background: var(--seg-bg); border-radius: 12px; padding: 4px; margin: 16px 0; }
-.seg-btn { flex: 1; border: none; background: transparent; padding: 9px; border-radius: 9px; font-size: 15px; color: var(--seg-text); cursor: pointer; }
+.seg-btn { flex: 1; border: none; background: transparent; padding: 9px; border-radius: 9px; font-size: 15px; color: var(--seg-text); cursor: pointer; white-space: nowrap; }
 .seg-btn.active { background: var(--seg-active); color: var(--accent); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
 .auth-card label { margin-bottom: 12px; }
 .auth-hint { color: var(--accent); font-size: 13px; min-height: 18px; text-align: center; margin-top: 10px; }
@@ -103,7 +103,7 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .si-name { font-size: 15px; font-weight: 600; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .si-now { font-size: 10px; color: #fff; background: var(--accent); padding: 1px 7px; border-radius: 8px; flex: 0 0 auto; margin-left: auto; }
 .si-meta { font-size: 12px; color: var(--text-weak); }
-.si-btns { display: flex; justify-content: flex-end; gap: 10px; }
+.si-btns { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .si-btn { border: 1px solid var(--line); background: var(--panel); color: var(--sub); font-size: 13px; padding: 7px 13px; border-radius: 10px; cursor: pointer; flex: 0 0 auto; }
 .si-btn.danger { color: #e5484d; border-color: color-mix(in srgb, #e5484d 45%, transparent); }
 .space-actions { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -369,6 +369,9 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .settings-body { padding: 4px 16px calc(104px + var(--sa-bottom)); display: flex; flex-direction: column; gap: 18px; }
 .set-group { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.05); display: flex; flex-direction: column; gap: 16px; }
 .set-title { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; }
+/* 组内的小标题 + 它自己的控件（如「深色模式」+ 三档切换）要贴在一起：外层 .set-group 的 gap 是 16px */
+.set-block { display: flex; flex-direction: column; gap: 10px; }
+.set-sub { font-size: 13px; font-weight: 600; color: var(--sub); }
 .set-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-weak); }
 /* flex-direction 要显式写：全局 `label{flex-direction:column}` 会让「文字 + 勾选框」的 .set-row 竖排 */
 .set-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; font-size: 15px; }
@@ -386,6 +389,19 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .auth-card #lastSpaceBox { margin-bottom: 0; }
 .batch-list { max-height: 44vh; overflow: auto; -webkit-overflow-scrolling: touch; display: flex; flex-direction: column; gap: 6px; scrollbar-width: none; }
 .batch-list::-webkit-scrollbar { display: none; }
+/* 成员管理：一行一人，角色徽章紧跟名字，日程数靠右；已退出的整行压暗 */
+.member-list { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow: auto; scrollbar-width: none; }
+.member-list::-webkit-scrollbar { display: none; }
+.member-row { display: flex; flex-direction: row; align-items: center; gap: 9px; font-size: 15px; color: var(--text); padding: 9px 12px; border-radius: 12px; background: var(--tint); min-width: 0; min-height: 46px; }
+/* 有「移出」按钮的那行原本会高出十几像素，把按钮收紧成和文字行同高，四行才对得齐 */
+.member-row .si-btn { padding: 4px 10px; font-size: 12px; border-radius: 8px; }
+/* 昵称一长，flex 就把徽章压成竖排两个字：角色标签必须整体不换行、不被压缩 */
+.member-row .badge { white-space: nowrap; flex: 0 0 auto; }
+.member-row .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.mr-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-meta { margin-left: auto; flex: 0 0 auto; font-size: 12px; color: var(--text-weak); }
+.badge.mr-role { background: var(--accent-soft); color: var(--accent); }
+.member-row.out { opacity: .55; }
 /* `.modal label` 的优先级比 .batch-row 高，会把手风琴式的 column 带进来——选择器得带上 .modal 才压得住 */
 .modal .batch-row { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 15px; color: var(--text); padding: 9px 12px; border-radius: 12px; background: var(--tint); }
 .batch-row input { width: 20px; height: 20px; flex: 0 0 auto; }

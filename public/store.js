@@ -4,6 +4,7 @@
 
   const listeners = [];
   const goneListeners = []; // 云端空间被创建者删除时的回调
+  const kickedListeners = []; // 自己被空间管理员移出时的回调
   const cache = {}; // code -> { data, etag, dirty, seeds, syncing }
 
   function localKey(code) { return 'tm:space:' + code; }
@@ -128,10 +129,15 @@
     }
     return added;
   }
-  function memberRecord() {
+  function memberRecord(code) {
     const rec = { name: App.me.name, color: App.me.color, dev: App.clientId, joinedAt: Date.now(), updatedAt: Date.now(), by: myId() };
     const acct = myAcct();
     if (acct) rec.acct = acct; // 登录过就把邮箱写进成员资料：跨设备认人不再靠昵称猜
+    /* 这个成员用的是哪个网盘账号：与创建者同账号的人（拿配置码进来的家人）算管理员 */
+    if (window.Dav && Dav.acctId) {
+      const davId = Dav.acctId(code);
+      if (davId) rec.davId = davId;
+    }
     return rec;
   }
   /* 把一个成员键标记为退休（into=接手的新键，可为空）。删成员必须留痕，
@@ -207,10 +213,14 @@
       });
     });
     const self = data.members[mine];
-    if (self && (!self.dev || !self.acct)) { // 老数据补一次设备号/邮箱
+    if (self && !self.out && (!self.dev || !self.acct || !self.davId)) { // 老数据补一次设备号/邮箱/网盘账号
       self.dev = self.dev || App.clientId;
       const acct = myAcct();
       if (acct) self.acct = self.acct || acct;
+      if (window.Dav && Dav.acctId) {
+        const davId = Dav.acctId(code);
+        if (davId && self.davId !== davId) self.davId = davId;
+      }
       self.updatedAt = Date.now();
       changed = true;
     }
@@ -229,11 +239,11 @@
   /* 自己掉出成员表（被别人覆写掉了）就补回来，并标脏让下一轮写回云端。
      本机当前键若已被退休指向另一个键（例如退出登录后回到设备号，而日程早就记在邮箱名下），
      补的是那个后继键——否则一轮补、下一轮又按退休记录删，永远收敛不了 */
-  function ensureSelf(c) {
+  function ensureSelf(code, c) {
     if (!c.data) return false;
     const id = resolveId(c.data, myId());
     if (c.data.members[id]) return false;
-    c.data.members[id] = memberRecord();
+    c.data.members[id] = memberRecord(code);
     rememberMembers(c, c.data);
     c.dirty = true;
     return true;
@@ -271,8 +281,14 @@
           if (window.Dav && Dav.autoBind) Dav.autoBind(code); // 第一次同步成功就把网盘账号钉在这个空间上
           rememberMembers(c, c.data);
           restoreMembers(c, c.data);
-          ensureSelf(c);
+          ensureSelf(code, c);
           if (foldMembers(code, c.data)) c.dirty = true;
+          /* 被管理员移出：成员表里自己那条带着别人写的 out 标记。
+             本机不做任何静默删除——交给界面问用户要不要移除本机副本 */
+          const meKey = resolveId(c.data, myId());
+          const myRec = c.data.members[meKey];
+          const kicked = myRec && myRec.out && myRec.outBy !== meKey ? myRec.out : 0;
+          if (kicked !== c.kicked) { c.kicked = kicked; if (kicked) kickedListeners.forEach((fn) => fn(code)); }
           /* 合并结果比云端多成员 = 有人（包括自己）被旧版覆盖挤掉了，得把名单推回去；
              只补本机不写回的话，云端会一直缺人，别人看到的还是旧人数 */
           if (Object.keys(c.data.members).some((id) => remoteMembers.indexOf(id) < 0)) c.dirty = true;
@@ -348,7 +364,7 @@
     const id = myId();
     return {
       v: 2, code, name, createdBy: id, nameUpdatedAt: 0,
-      members: { [id]: memberRecord() },
+      members: { [id]: memberRecord(code) },
       events: {}, deletions: {}, retired: {},
     };
   }
@@ -363,9 +379,35 @@
     return best;
   }
 
+  /* ---------- 角色与「已退出」标记 ----------
+     网盘没有服务器鉴权，所以管理员不是权限，只是「谁有义务整理这个空间」：
+     创建者，以及和创建者用同一个网盘账号的人（拿配置码进来的家人）自动算管理员。
+     老数据里没有 davId，认不出同账号的人，那种情况下只有创建者是管理员。 */
+  function roleOf(d, id) {
+    if (!d) return 'member';
+    const me = resolveId(d, id);
+    const c = creatorId(d);
+    if (c && me === c) return 'creator';
+    const mine = d.members[me];
+    if (!mine || !c || !mine.davId) return 'member';
+    const cm = d.members[c] || {};
+    return cm.davId && cm.davId === mine.davId ? 'admin' : 'member';
+  }
+  function isManager(d, id) { const r = roleOf(d, id); return r === 'creator' || r === 'admin'; }
+  /* 成员记录上的 out 就是「已退出 / 已被移出」：名片和名下日程都留着，
+     只是不再出现在成员标签里——历史日程显示成「未知」比留着名字难看得多 */
+  function outAt(d, id) { const m = d && d.members[resolveId(d, id)]; return (m && m.out) || 0; }
+  /* 把某个人标记为已退出（by=做这件事的身份键：自己退出或被管理员移出） */
+  function markOut(d, id, by) {
+    const m = d.members[id];
+    if (!m || m.out) return false;
+    m.out = Date.now(); m.outBy = by; m.updatedAt = Date.now(); m.by = by;
+    return true;
+  }
+
   function renameSpace(code, name) {
     const d = loadLocal(code).data;
-    if (!d || !isMine(creatorId(d), d)) return false;
+    if (!d || !isManager(d, myId())) return false;
     mutate(code, (dd) => { dd.name = name; dd.nameUpdatedAt = Date.now(); });
     const spaces = api.listSpaces();
     const s = spaces.find((x) => x.code === code);
@@ -382,13 +424,22 @@
     return { data: JSON.parse(r.text), etag: r.etag };
   }
 
-  /* 加入/回到一个空间时确保自己在成员表里；若已被别人的过期覆写挤掉，会自动补回并写回云端 */
+  /* 加入/回到一个空间时确保自己在成员表里；若已被别人的过期覆写挤掉，会自动补回并写回云端。
+     被移出的人重新拿邀请码进来时，是把他原来那条记录的 out 标记清掉，而不是另建一条 */
   function ensureMember(code) {
     const c = loadLocal(code);
     if (!c.data) return false;
     const id = resolveId(c.data, myId());
-    if (c.data.members[id]) return false;
-    mutate(code, (d) => { d.members[id] = memberRecord(); });
+    const cur = c.data.members[id];
+    if (cur && !cur.out) return false;
+    mutate(code, (d) => {
+      const rec = d.members[id] || memberRecord(code);
+      if (window.Dav && Dav.acctId) {
+        const davId = Dav.acctId(code);
+        if (davId) rec.davId = davId;
+      }
+      d.members[id] = Object.assign(rec, { joinedAt: rec.joinedAt || Date.now(), out: null, outBy: null, updatedAt: Date.now(), by: myId() });
+    });
     return true;
   }
 
@@ -607,7 +658,7 @@
       const c = loadLocal(code);
       const id = c.data ? resolveId(c.data, myId()) : myId();
       mutate(code, (d) => {
-        d.members[id] = Object.assign(memberRecord(), d.members[id] || {}, {
+        d.members[id] = Object.assign(memberRecord(code), d.members[id] || {}, {
           name: App.me.name, color: App.me.color, dev: App.clientId, acct: myAcct() || undefined,
           updatedAt: Date.now(), by: id,
         });
@@ -617,7 +668,62 @@
     renameSpace,
     owns(id, data) { return isMine(id, data); },
     resolve(data, id) { return resolveId(data, id); }, // 旧身份键 → 现在的那条成员
-    canRename(code) { const d = loadLocal(code).data; return !!d && isMine(creatorId(d), d); },
+    canRename(code) { const d = loadLocal(code).data; return !!d && isManager(d, myId()); },
+    /* ---------- 角色 / 退出 / 移出 ---------- */
+    role(code, id) { return roleOf(loadLocal(code).data, id === undefined ? myId() : id); },
+    isManager(code) { const d = loadLocal(code).data; return !!d && isManager(d, myId()) && !outAt(d, myId()); },
+    members(code) {
+      const d = loadLocal(code).data;
+      if (!d) return [];
+      const cr = creatorId(d);
+      return Object.keys(d.members).map((id) => {
+        const m = d.members[id];
+        let n = 0;
+        Object.keys(d.events).forEach((e) => { if (resolveId(d, d.events[e].ownerId) === id) n++; });
+        return {
+          id, name: m.name || '未命名', color: m.color || '', role: id === cr ? 'creator' : roleOf(d, id),
+          davId: m.davId || '', out: m.out || 0, outBy: m.outBy || '', mine: isMine(id, d), events: n, joinedAt: m.joinedAt || 0,
+        };
+      }).sort((a, b) => (a.out - b.out) || (a.role === 'creator' ? -1 : b.role === 'creator' ? 1 : (a.role === 'admin' ? -1 : b.role === 'admin' ? 1 : a.joinedAt - b.joinedAt)));
+    },
+    /* 管理员能移出的只有「普通成员」：创建者动不得，同为管理员的也动不得（同一网盘账号本来就是一家人） */
+    canKick(code, id) {
+      const d = loadLocal(code).data;
+      if (!d) return false;
+      const t = resolveId(d, id);
+      return isManager(d, myId()) && roleOf(d, t) === 'member' && !outAt(d, t) && t !== myId();
+    },
+    kickMember(code, id) {
+      if (!api.canKick(code, id)) return false;
+      const d = loadLocal(code).data;
+      const t = resolveId(d, id);
+      mutate(code, (dd) => { markOut(dd, t, resolveId(dd, myId())); });
+      return true;
+    },
+    /* 退出空间：在云端成员表里把自己标记为已退出（可选把自己名下的日程一起打墓碑），
+       本机副本要等云端写成功之后再清，否则离线退出等于这件事从没发生过 */
+    async leave(code, opts) {
+      const c = loadLocal(code);
+      const d = c.data;
+      if (!d) return false;
+      const me = resolveId(d, myId());
+      if (roleOf(d, me) === 'creator') return false; // 创建者该走「清空云端」，空间不能没有主人
+      mutate(code, (dd) => {
+        markOut(dd, me, me);
+        if (opts && opts.dropMine) {
+          Object.keys(dd.events).forEach((id) => {
+            const e = dd.events[id];
+            if (resolveId(dd, e.ownerId) !== me) return;
+            dd.deletions[id] = Math.max(Date.now(), (e.updatedAt || 0) + 1);
+            delete dd.events[id];
+          });
+        }
+      });
+      await syncCode(code);
+      if (c.dirty) throw new Error('网盘没连上，云端还不知道你退出了——请联网后重试');
+      return true;
+    },
+    onKicked: (fn) => kickedListeners.push(fn),
   };
   window.Store = api;
 })();

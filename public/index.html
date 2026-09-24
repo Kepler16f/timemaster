@@ -162,7 +162,7 @@
         <button class="big-btn ghost" id="scanSpacesBtn">🔍 扫描网盘，找回我加入过的空间</button>
         <div class="set-row"><span>当前空间名称</span><span class="set-val" id="curSpaceName">—</span></div>
         <button class="big-btn ghost hidden" id="renameBtn">✏️ 重命名当前空间</button>
-        <p class="set-note hidden" id="renameLockNote">空间名称仅创建者可修改。</p>
+        <p class="set-note hidden" id="renameLockNote">空间名称仅创建者或管理员可修改。</p>
         <button class="big-btn ghost" id="batchBtn">☑️ 批量管理日程（当前空间）</button>
         <div class="set-actions">
           <button class="big-btn ghost" id="mgmtCreate">＋ 新建空间</button>
@@ -177,20 +177,25 @@
 
       <div class="set-group">
         <div class="set-title">外观</div>
-        <div class="seg" id="themeSeg">
-          <button type="button" class="seg-btn" data-val="auto">跟随系统</button>
-          <button type="button" class="seg-btn" data-val="light">浅色</button>
-          <button type="button" class="seg-btn" data-val="dark">深色</button>
+        <div class="set-block">
+          <div class="set-sub">深色模式</div>
+          <div class="seg" id="themeSeg">
+            <button type="button" class="seg-btn" data-val="auto">跟随系统</button>
+            <button type="button" class="seg-btn" data-val="light">浅色</button>
+            <button type="button" class="seg-btn" data-val="dark">深色</button>
+          </div>
         </div>
-        <div class="set-row">
-          <span>默认视图</span>
-          <label class="set-inline" for="dayViewSw"><span>日视图</span><input type="checkbox" id="dayViewSw"></label>
-        </div>
-        <div class="seg" id="defViewSeg">
-          <button type="button" class="seg-btn" data-val="last">跟随上次</button>
-          <button type="button" class="seg-btn" data-val="month">月</button>
-          <button type="button" class="seg-btn" data-val="week">周</button>
-          <button type="button" class="seg-btn" data-val="day">日</button>
+        <div class="set-block">
+          <div class="set-row">
+            <span>默认视图</span>
+            <label class="set-inline" for="dayViewSw"><span>日视图</span><input type="checkbox" id="dayViewSw"></label>
+          </div>
+          <div class="seg" id="defViewSeg">
+            <button type="button" class="seg-btn" data-val="last">跟随上次</button>
+            <button type="button" class="seg-btn" data-val="month">月</button>
+            <button type="button" class="seg-btn" data-val="week">周</button>
+            <button type="button" class="seg-btn" data-val="day">日</button>
+          </div>
         </div>
       </div>
 
@@ -267,6 +272,31 @@
       <div class="modal-actions">
         <button id="clearCancel" class="action-btn">取消</button>
         <button id="clearOk" class="action-btn primary">确认清空</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 空间成员管理 ============ -->
+  <div class="modal-mask" id="memberModal" hidden>
+    <div class="modal">
+      <h3>空间成员</h3>
+      <p class="import-tip" id="memberHint"></p>
+      <div id="memberList" class="member-list"></div>
+      <div class="modal-actions">
+        <button id="memberClose" class="action-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 退出空间 ============ -->
+  <div class="modal-mask" id="leaveModal" hidden>
+    <div class="modal">
+      <h3>退出空间</h3>
+      <p class="import-tip">退出后本机不再同步「<b id="leaveSpaceName"></b>」，本机存的这份云端日程数据会一并清掉；网盘上的空间文件和其他成员的日程不受影响。以后重新输入邀请码还能再进来。</p>
+      <label class="checkbox" id="leavePurgeWrap"><input type="checkbox" id="leavePurge" /><span id="leavePurgeText">同时删除我在该空间创建的日程</span></label>
+      <div class="modal-actions">
+        <button id="leaveCancel" class="action-btn">取消</button>
+        <button id="leaveOk" class="action-btn primary danger-solid">确认退出</button>
       </div>
     </div>
   </div>

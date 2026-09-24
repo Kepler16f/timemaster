@@ -81,6 +81,16 @@
   }
   function acctLabelOf(c) { return ((c && c.user) || '?') + '@' + hostLabel(c && c.baseUrl); }
   function acctLabel(code) { return acctLabelOf(spaceCfg(code) || {}); }
+  /* 账号的稳定身份标识：写进成员记录，用来认「谁和创建者用的是同一个网盘账号」。
+     取哈希而不是原文——成员表是所有人都能读的，别把账号名再抄一份进去 */
+  function acctId(code) {
+    const c = spaceCfg(code);
+    if (!usable(c)) return '';
+    const s = normalizeBase(c.baseUrl).toLowerCase() + '|' + String(c.user).toLowerCase();
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x1000193) >>> 0; }
+    return 'a' + h.toString(16);
+  }
 
   function accounts() {
     try { return JSON.parse(localStorage.getItem(LS_ACCTS)) || {}; } catch (e) { return {}; }
@@ -279,6 +289,6 @@
   window.Dav = {
     cfg, saveConfig, get, put, remove, ensureDir, test, exportCode, importCode, parseCode,
     spaceCfg, bindSpace, unbindSpace, autoBind, isDefaultAcct, acctLabel, sameAccount,
-    knownAccounts, rememberAccount, listCodes, scanCodes, getWith, saveWith, usable, acctLabelOf, normalizeBase,
+    knownAccounts, rememberAccount, listCodes, scanCodes, getWith, saveWith, usable, acctLabelOf, acctId, normalizeBase,
   };
 })();

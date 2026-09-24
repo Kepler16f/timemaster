@@ -513,18 +513,32 @@ function spaceItems(listEl, onClick){
        这就是「为什么看不见新加进来的人」的第一线索 */
     const acctNote = Dav.isDefaultAcct(s.code) ? '' : ' · 网盘 '+Dav.acctLabel(s.code);
     const errNote = st.missing && st.exists ? ' · ⚠ '+escapeHtml(st.lastError||'网盘上找不到该空间文件') : '';
+    /* 已退出/已被移出的成员不计进人数：名片留着是为了让历史日程还认得出人 */
+    const liveN = data ? Object.keys(data.members).filter((id)=>!data.members[id].out).length : 0;
     item.innerHTML=`<div class="si-top">
         <div class="si-name">${escapeHtml(s.name||'共享空间')}</div>
         ${s.code===state.code?'<span class="si-now">使用中</span>':''}
       </div>
-      <div class="si-meta">${s.code} · ${data?Object.keys(data.members).length:0} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}${acctNote}${errNote}</div>`;
+      <div class="si-meta">${s.code} · ${liveN} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}${acctNote}${errNote}</div>`;
     if(onClick) item.onclick=()=>onClick(s);
     else {
       /* 整张卡片可点：新建/加入空间后在设置里点一下就切过去 */
       item.onclick=()=>{ if(s.code!==state.code && needDav(s.code)) enterSpace(s.code); };
       const btns=document.createElement('div'); btns.className='si-btns'; item.appendChild(btns);
-      const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
-      clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
+      const am=Store.isManager(s.code), role=Store.role(s.code);
+      const mb=document.createElement('button'); mb.className='si-btn'; mb.textContent='成员'; mb.title='查看成员与管理员';
+      mb.onclick=(ev2)=>{ ev2.stopPropagation(); openMemberModal(s.code); };
+      btns.appendChild(mb);
+      if(am){
+        const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
+        clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
+        btns.appendChild(clr);
+      }
+      if(data && role!=='creator'){
+        const lv=document.createElement('button'); lv.className='si-btn'; lv.textContent='退出'; lv.title='退出该空间';
+        lv.onclick=(ev2)=>{ ev2.stopPropagation(); openLeaveModal(s.code); };
+        btns.appendChild(lv);
+      }
       const out=document.createElement('button'); out.className='si-btn danger'; out.textContent='移除';
       out.onclick=async(ev2)=>{
         ev2.stopPropagation();
@@ -532,7 +546,7 @@ function spaceItems(listEl, onClick){
         Store.removeSpace(s.code);
         if(state.code===s.code) initStart(); else renderSpaceMgmt();
       };
-      btns.appendChild(clr); btns.appendChild(out);
+      btns.appendChild(out);
     }
     listEl.appendChild(item);
   });
@@ -621,6 +635,97 @@ $('#batchDel').onclick=async()=>{
   $('#batchModal').hidden=true;
   toast(n?`已删除 ${n} 条日程`:'没有可删除的日程（仅能删除自己创建的）');
 };
+
+/* ---------- 成员管理 / 退出空间 ---------- */
+const ROLE_ZH = { creator: '创建者', admin: '管理员', member: '成员' };
+let memberCode = null;
+function openMemberModal(code) {
+  if (!Store.get(code)) return toast('这个空间还没有可读的数据，请先同步');
+  memberCode = code; renderMembers(); $('#memberModal').hidden = false;
+}
+function renderMembers() {
+  const box = $('#memberList'); box.innerHTML = '';
+  const am = Store.isManager(memberCode);
+  $('#memberHint').textContent = am
+    ? '你是' + ROLE_ZH[Store.role(memberCode)] + '：可以移出普通成员。网盘上没有服务器，被移出的人再输一次邀请码仍然能回来。'
+    : '创建者，以及和创建者用同一个网盘账号的人（拿配置码进来的家人）是管理员，可以移出普通成员。';
+  const list = Store.members(memberCode);
+  if (!list.length) { box.innerHTML = '<p class="set-note">还没有成员记录。</p>'; return; }
+  list.forEach((m) => {
+    const row = document.createElement('div');
+    row.className = 'member-row' + (m.out ? ' out' : '');
+    row.innerHTML = `<span class="dot" style="background:${escapeHtml(m.color || '#999')}"></span>
+      <span class="mr-name">${escapeHtml(m.name)}${m.mine ? '（我）' : ''}</span>
+      <span class="badge${m.role !== 'member' ? ' mr-role' : ''}">${m.out ? (m.outBy && m.outBy !== m.id ? '已被移出' : '已退出') : ROLE_ZH[m.role]}</span>
+      <span class="mr-meta">${m.events} 条 · ${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '加入时间未知'}</span>`;
+    if (Store.canKick(memberCode, m.id)) {
+      const btn = document.createElement('button');
+      btn.className = 'si-btn danger'; btn.textContent = '移出';
+      btn.onclick = async () => {
+        const data = Store.get(memberCode) || {};
+        if (!await uiConfirm('移出成员', `把「${m.name}」移出「${data.name || memberCode}」？TA 名下的日程会保留（仍显示 TA 的名字），TA 本机下次同步会收到移出通知。`, '移出')) return;
+        try {
+          Store.kickMember(memberCode, m.id);
+          await Store.syncCode(memberCode);
+          toast('已移出，稍后同步给其他成员');
+          renderMembers(); renderSpaceMgmt();
+        } catch (e) { toast(e.message); }
+      };
+      row.appendChild(btn);
+    }
+    box.appendChild(row);
+  });
+}
+$('#memberClose').onclick = () => { $('#memberModal').hidden = true; };
+
+let leaveCode = null;
+function myEventCount(code) {
+  const data = Store.get(code);
+  if (!data) return 0;
+  return Object.keys(data.events).filter((id) => Store.owns(data.events[id].ownerId, data)).length;
+}
+function openLeaveModal(code) {
+  if (Store.role(code) === 'creator') return toast('创建者不能退出自己创建的空间：要清掉数据请用「☁ 清空」');
+  if (!Store.get(code)) return toast('这个空间还没有可读的数据，直接用「移除」从本机删掉就行');
+  leaveCode = code;
+  const data = Store.get(code);
+  $('#leaveSpaceName').textContent = data.name || code;
+  const n = myEventCount(code);
+  $('#leavePurgeWrap').classList.toggle('hidden', !n);
+  $('#leavePurge').checked = false;
+  $('#leavePurgeText').textContent = `同时删除我在该空间创建的日程（${n} 条，其他成员也会同步看不到）`;
+  $('#leaveModal').hidden = false;
+}
+$('#leaveCancel').onclick = () => { $('#leaveModal').hidden = true; };
+$('#leaveOk').onclick = async () => {
+  if (!leaveCode) return;
+  const code = leaveCode, btn = $('#leaveOk'); btn.disabled = true;
+  try {
+    if (!needDav(code)) return;
+    /* 先把「退出」写进云端成员表，成功后才清本机副本：反过来做就等于没退出过 */
+    if (!await Store.leave(code, { dropMine: $('#leavePurge').checked })) return;
+    Store.removeSpace(code);
+    $('#leaveModal').hidden = true;
+    toast('已退出该空间');
+    if (state.code === code) { state.code = null; stopPolling(); initStart(); } else renderSpaceMgmt();
+  } catch (e) { toast(e.message); }
+  finally { btn.disabled = false; }
+};
+
+/* 被管理员移出：和「空间被删除」一样问一声再动本机副本，绝不静默删 */
+Store.onKicked(async (code) => {
+  const data = Store.get(code); if (!data) return;
+  if (state.code === code) stopPolling();
+  const st = Store.status(code);
+  const ok = await uiConfirm('你已被移出空间',
+    `「${data.name || code}」的管理员把你移出了这个空间。要把它从本机一并移除吗？`
+    + (st.dirty ? '注意：本机还有没同步出去的改动，移除会一起丢掉。' : ''),
+    '移除本机副本');
+  if (!ok) { if (state.code === code) startPolling(); return; }
+  Store.removeSpace(code);
+  toast('已移除被退出的空间');
+  if (state.code === code) { state.code = null; initStart(); } else renderSpaceMgmt();
+});
 
 /* ---------- 清空云端空间数据 ---------- */
 let clearTarget=null;
@@ -721,6 +826,7 @@ function renderPeopleTags(){
   const data=Store.get(state.code); if(!data) return;
   Object.keys(data.members).forEach(id=>{
     const m=data.members[id];
+    if(m.out) return; /* 已退出/已被移出的成员不再出现在标签行里，TA 名下的历史日程照旧显示 */
     const tag=document.createElement('span');
     const on=memberOn(id);
     tag.className='person-tag'+(on?'':' off');
@@ -1230,6 +1336,7 @@ function fillImportOwner(){
   const sel=$('#importOwner'); sel.innerHTML='';
   const data=Store.get(state.code); if(!data) return;
   Object.keys(data.members).forEach(id=>{
+    if(data.members[id].out) return; // 已退出的成员不再作为归属选项
     const o=document.createElement('option'); o.value=id;
     o.textContent=data.members[id].name+(Store.owns(id,data)?'（我）':''); sel.appendChild(o);
   });

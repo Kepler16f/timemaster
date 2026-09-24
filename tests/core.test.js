@@ -243,6 +243,82 @@ store.attach('C1', local);
     });
   }
 
+  /* ---------- 8. 管理员角色 / 退出空间 / 移出成员 ---------- */
+  {
+    /* 本机在 S10 用的是「家里那个网盘账号」，在别处用别的账号 */
+    win.Dav.acctId = (code) => (code === 'S10' ? 'aHome' : 'aOther');
+    win.Auth = { memberKey: () => 'sisDev', session: () => null };
+    await store.attach('S10', {
+      v: 2, code: 'S10', name: '家里', createdBy: 'mom',
+      members: {
+        mom: { name: '妈妈', color: '#1', joinedAt: 1, updatedAt: 1, by: 'mom', davId: 'aHome' },
+        sisDev: { name: 'T', color: '#2', joinedAt: 2, updatedAt: 2, by: 'sisDev', davId: 'aHome' },
+        friend: { name: '同学', color: '#3', joinedAt: 3, updatedAt: 3, by: 'friend', davId: 'aOther' },
+      },
+      events: {
+        f1: { id: 'f1', ownerId: 'friend', title: '同学的日程', date: '2026-09-21', updatedAt: 1, by: 'friend' },
+        s1: { id: 's1', ownerId: 'sisDev', title: '我的日程', date: '2026-09-22', updatedAt: 1, by: 'sisDev' },
+      },
+      deletions: {}, retired: {},
+    });
+    eq('role: 与创建者同一个网盘账号的人算管理员', store.role('S10'), 'admin');
+    eq('role: 管理员可以改空间名', store.canRename('S10'), true);
+    eq('kick: 管理员可移出普通成员', store.canKick('S10', 'friend'), true);
+    eq('kick: 管理员动不了创建者', store.canKick('S10', 'mom'), false);
+    eq('kick: 同为管理员的互相动不了', store.canKick('S10', 'sisDev'), false);
+    eq('members: 创建者排前、带角色与名下日程数',
+      store.members('S10').map((m) => [m.name, m.role, m.events]), [['妈妈', 'creator', 0], ['T', 'admin', 1], ['同学', 'member', 1]]);
+
+    /* 退出空间：写云端 + 本机副本要等云端确认后才清（清副本在界面层做） */
+    eq('leave: 非创建者可以退出', await store.leave('S10', { dropMine: true }), true);
+    const dl = store.get('S10');
+    eq('leave: 成员表里标成已退出、且是自己标的', [!!dl.members.sisDev.out, dl.members.sisDev.outBy], [true, 'sisDev']);
+    eq('leave: 勾选后自己名下的日程打了墓碑', [!!dl.events.s1, !!dl.deletions.s1], [false, true]);
+    eq('leave: 别人的日程一条不动', !!dl.events.f1, true);
+    eq('leave: 已退出的人不再是管理员', store.isManager('S10'), false);
+    eq('leave: 创建者不能退出自己的空间', await (async () => {
+      win.Auth = { memberKey: () => 'mom', session: () => null };
+      return store.leave('S10', {});
+    })(), false);
+    /* 拿邀请码重新进来：清掉原来那条的 out 标记，而不是又冒出第二个人 */
+    win.Auth = { memberKey: () => 'sisDev', session: () => null };
+    eq('leave: 重新加入会写回成员表', store.ensureMember('S10'), true);
+    eq('leave: 重新加入后不再是已退出', !!store.get('S10').members.sisDev.out, false);
+    eq('leave: 成员表里没有多出第二条', store.members('S10').filter((m) => m.mine).length, 1);
+
+    /* 管理员移出成员：名片与名下日程都留着，只是标成已退出 */
+    eq('kick: 移出执行成功', store.kickMember('S10', 'friend'), true);
+    const dk = store.get('S10');
+    eq('kick: 对方被标成被别人移出', [!!dk.members.friend.out, dk.members.friend.outBy], [true, 'sisDev']);
+    eq('kick: 对方的日程保留（不脏数据）', !!dk.events.f1, true);
+    eq('kick: 移出后不能再移出第二次', store.canKick('S10', 'friend'), false);
+    eq('kick: 非管理员谁也别想移', (() => {
+      win.Auth = { memberKey: () => 'friend', session: () => null };
+      const r = store.canKick('S10', 'sisDev');
+      win.Auth = { memberKey: () => 'sisDev', session: () => null };
+      return r;
+    })(), false);
+  }
+  {
+    /* 被移出的人下次同步要收到通知，本机记录不能被「补回成员表」逻辑悄悄复活 */
+    win.Dav.get = async () => ({
+      status: 200, etag: 'W/"11"', text: JSON.stringify({
+        v: 2, code: 'S11', name: 'S11', createdBy: 'mom',
+        members: {
+          mom: { name: '妈妈', color: '#1', joinedAt: 1, updatedAt: 1, by: 'mom', davId: 'aOther' },
+          sisDev: { name: 'T', color: '#2', joinedAt: 2, updatedAt: 2, by: 'sisDev', out: 123, outBy: 'mom' },
+        },
+        events: {}, deletions: {}, retired: {},
+      }),
+    });
+    let kickedCode = '';
+    store.onKicked((c) => { kickedCode = c; });
+    await store.syncCode('S11');
+    eq('kicked: 同步时通知界面（由界面问用户要不要移除本机副本）', kickedCode, 'S11');
+    eq('kicked: 自己的 out 标记没被 ensureSelf 抹掉', store.get('S11').members.sisDev.out, 123);
+    eq('kicked: 被移出的人不算管理员', store.isManager('S11'), false);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
