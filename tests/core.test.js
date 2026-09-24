@@ -292,6 +292,13 @@ store.attach('C1', local);
     eq('kick: 对方被标成被别人移出', [!!dk.members.friend.out, dk.members.friend.outBy], [true, 'sisDev']);
     eq('kick: 对方的日程保留（不脏数据）', !!dk.events.f1, true);
     eq('kick: 移出后不能再移出第二次', store.canKick('S10', 'friend'), false);
+    /* 这件事在别人眼里只该出现一次：名单画过一次，以后再开面板就别再占位置 */
+    eq('ack: 刚被移出的人第一次仍在名单里', store.members('S10').some((m) => m.id === 'friend'), true);
+    eq('ack: 画过一次即落已读', store.ackOut('S10'), 1);
+    eq('ack: 之后再开面板不再显示这个人', store.members('S10').some((m) => m.id === 'friend'), false);
+    eq('ack: 只是不显示，云端记录与他的日程都没动', [!!dk.members.friend, !!dk.events.f1], [true, true]);
+    dk.members.friend.out = Date.now() + 1000; // 他回来过又被移出一次（新的 out）→ 还要再提一次
+    eq('ack: 新的移出标记会重新出现', store.members('S10').some((m) => m.id === 'friend'), true);
     eq('kick: 非管理员谁也别想移', (() => {
       win.Auth = { memberKey: () => 'friend', session: () => null };
       const r = store.canKick('S10', 'sisDev');

@@ -404,6 +404,11 @@
     m.out = Date.now(); m.outBy = by; m.updatedAt = Date.now(); m.by = by;
     return true;
   }
+  /* 被移出的人在别人的名单里只该出现一次：第一次看到（面板画出来过）就落一笔已读，
+     以后再开面板直接不见。已读记的是「这个键 + 这次的 out 时间戳」，所以同一人日后
+     再被移出一次（新的 out）还会再显示一次。云端那条成员记录照旧留着不动。 */
+  function outSeen() { try { return JSON.parse(localStorage.getItem('tm:outSeen') || '{}'); } catch (e) { return {}; } }
+  function seenOut(code, id, ts) { return outSeen()[code + '|' + id] === ts; }
 
   function renameSpace(code, name) {
     const d = loadLocal(code).data;
@@ -676,7 +681,10 @@
       const d = loadLocal(code).data;
       if (!d) return [];
       const cr = creatorId(d);
-      return Object.keys(d.members).map((id) => {
+      return Object.keys(d.members).filter((id) => {
+        const m = d.members[id];
+        return !m.out || !seenOut(code, id, m.out); // 已看过一次的退出/被移出者不再出现在名单里
+      }).map((id) => {
         const m = d.members[id];
         let n = 0;
         Object.keys(d.events).forEach((e) => { if (resolveId(d, d.events[e].ownerId) === id) n++; });
@@ -685,6 +693,21 @@
           davId: m.davId || '', out: m.out || 0, outBy: m.outBy || '', mine: isMine(id, d), events: n, joinedAt: m.joinedAt || 0,
         };
       }).sort((a, b) => (a.out - b.out) || (a.role === 'creator' ? -1 : b.role === 'creator' ? 1 : (a.role === 'admin' ? -1 : b.role === 'admin' ? 1 : a.joinedAt - b.joinedAt)));
+    },
+    /* 名单画出来一次就算看过了：之后这些退出/被移出的人不再占位置 */
+    ackOut(code) {
+      const d = loadLocal(code).data;
+      if (!d) return 0;
+      const seen = outSeen();
+      let n = 0;
+      Object.keys(d.members).forEach((id) => {
+        const m = d.members[id];
+        if (!m.out) return;
+        const k = code + '|' + id;
+        if (seen[k] !== m.out) { seen[k] = m.out; n++; }
+      });
+      if (n) localStorage.setItem('tm:outSeen', JSON.stringify(seen));
+      return n;
     },
     /* 管理员能移出的只有「普通成员」：创建者动不得，同为管理员的也动不得（同一网盘账号本来就是一家人） */
     canKick(code, id) {
