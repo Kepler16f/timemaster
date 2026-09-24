@@ -18,7 +18,7 @@ ENV_FILE="${HAP_SIGN_ENV:-$HOME/.hap-sign.env}"
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 HAP_JAVA="${HAP_JAVA:-$HOME/dev/jdk-17/bin/java}"
-HAP_SIGNTOOL="${HAP_SIGNTOOL:-$HOME/Downloads/ohos-sign-tool/hap-sign-tool.jar}"
+HAP_SIGNTOOL="${HAP_SIGNTOOL:-$HOME/dev/ohos-sign-tool/hap-sign-tool.jar}"
 HAP_KEY_ALIAS="${HAP_KEY_ALIAS:-xiaobai}"
 # 口令留空就直接取本机现成的签名配置（只读进变量，不打印、不入库）
 CFG="${HAP_SIGN_CONFIG:-$HOME/Documents/hap_installer/signConfig.json}"
