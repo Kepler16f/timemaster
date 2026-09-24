@@ -130,7 +130,7 @@
           </div>
         </div>
         <div class="set-row"><span>📱 本机标识</span><span class="set-val" id="deviceIdShow">—</span></div>
-        <p class="set-note">登录后日程身份跟随账户：换手机登录同一邮箱，标签自动一致。不登录也完全可用（按本机身份）。</p>
+        <p class="set-note">登录后日程身份跟随账户：换手机登录同一邮箱，标签自动并成一个用户（昵称不一致会问你用哪个），该邮箱已加入的空间也会自动补回来。不登录也完全可用（按本机身份）。</p>
         <p class="set-note">完全退出后重开，上面这串应当不变；如果变了说明系统清掉了本机数据。</p>
       </div>
 
@@ -146,6 +146,7 @@
           <input type="password" id="davPass" placeholder="坚果云：设置-第三方应用密码-添加密码" />
         </label>
         <button class="big-btn ghost" id="davTest">🔌 测试连接</button>
+        <p class="set-note">这里是「本机默认账号」，新建空间存在它上面。家人发来的配置码只绑到它那一个空间，不会改掉这里的账号。</p>
       </div>
 
       <div class="set-group">
@@ -158,6 +159,7 @@
       <div class="set-group">
         <div class="set-title">空间管理</div>
         <div id="spaceMgmtList" class="space-list"></div>
+        <button class="big-btn ghost" id="scanSpacesBtn">🔍 扫描网盘，找回我加入过的空间</button>
         <div class="set-row"><span>当前空间名称</span><span class="set-val" id="curSpaceName">—</span></div>
         <button class="big-btn ghost hidden" id="renameBtn">✏️ 重命名当前空间</button>
         <p class="set-note hidden" id="renameLockNote">空间名称仅创建者可修改。</p>
@@ -194,7 +196,7 @@
 
       <div class="set-group">
         <div class="set-title">关于</div>
-        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.2.6</span></div>
+        <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.3.0</span></div>
         <div id="updGroup" hidden style="display:flex;flex-direction:column;gap:14px">
           <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
           <div class="set-actions">
@@ -335,6 +337,22 @@
     </div>
   </div>
 
+  <!-- ============ 单选提问弹层（换绑网盘、邮箱并成一个用户时问账户名称） ============ -->
+  <div class="modal-mask" id="askModal" hidden>
+    <div class="modal">
+      <h3 id="askTitle"></h3>
+      <p id="askText" class="confirm-text"></p>
+      <div id="askOpts" class="ask-opts"></div>
+      <label class="set-field hidden" id="askInputWrap">或自己填一个
+        <input type="text" id="askInput" maxlength="20" />
+      </label>
+      <div class="modal-actions">
+        <button id="askCancel" class="action-btn">取消</button>
+        <button id="askOk" class="action-btn primary hidden">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ============ 导入配置码 ============ -->
   <div class="modal-mask" id="cfgImportModal" hidden>
     <div class="modal">
@@ -356,6 +374,7 @@
       <label>发给家人，对方在「导入配置码」粘贴即可
         <textarea id="cfgExportText" rows="4" readonly></textarea>
       </label>
+      <p class="import-tip" id="cfgExportAcct"></p>
       <p class="import-tip warn">⚠️ 内含网盘应用密码，仅发给信任的人；泄露后可在坚果云重置应用密码。</p>
       <div class="modal-actions">
         <button id="cfgExportClose" class="action-btn">关闭</button>

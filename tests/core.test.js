@@ -153,6 +153,96 @@ store.attach('C1', local);
     delete win.Auth;
   }
 
+  /* ---------- 7. 身份收口：同人折叠 / 退休留痕 / 归属判定 ---------- */
+  {
+    /* 同一个人换了身份键（网页存储被清、设备号被原生存储接管）会留下两条成员，
+       旧键名下还压着日程：折成一条，日程改写到当前键，旧键写退休记录而不是直接删 */
+    win.Auth = { memberKey: () => 'zDevice', session: () => null };
+    await store.attach('S7', { v: 2, code: 'S7', name: 'S7', createdBy: 'oldDev',
+      members: {
+        oldDev: { name: 'T', color: '#fff', dev: 'zDevice', joinedAt: 1, updatedAt: 1, by: 'oldDev' },
+        zDevice: { name: 'T', color: '#fff', dev: 'zDevice', joinedAt: 5, updatedAt: 5, by: 'zDevice' },
+      },
+      events: { k1: { id: 'k1', ownerId: 'oldDev', title: '旧键写的日程', date: '2026-09-21', updatedAt: 1, by: 'oldDev' } },
+      deletions: {}, retired: {} });
+    const d7 = store.get('S7');
+    eq('fold: 同设备同昵称折成一条', Object.keys(d7.members).sort(), ['zDevice']);
+    eq('fold: 旧键名下日程改写到当前键', d7.events.k1.ownerId, 'zDevice');
+    eq('fold: 创建者一并改写', d7.createdBy, 'zDevice');
+    eq('fold: 折掉的键留下退休记录', d7.retired.oldDev, 'zDevice');
+
+    /* 别人本机留过档 → 把退休的旧键塞回成员表：合并侧要再次收掉，不能显示成第二个人 */
+    const resurrect = JSON.parse(JSON.stringify(d7));
+    resurrect.members.oldDev = { name: 'T', color: '#fff', dev: 'zDevice', joinedAt: 1, updatedAt: Date.now() + 9e5, by: 'oldDev' };
+    await store.attach('S7', resurrect);
+    eq('retired: 被复活的旧键当轮再折掉', !!store.get('S7').members.oldDev, false);
+    eq('retired: 日程仍在当前键名下', store.get('S7').events.k1.ownerId, 'zDevice');
+
+    /* 共用平板的两个人：设备号相同、昵称不同，绝不能并成一个 */
+    await store.attach('S9', { v: 2, code: 'S9', name: 'S9', createdBy: 'pad1',
+      members: { pad1: { name: '姐姐', color: '#1', dev: 'pad', joinedAt: 1, updatedAt: 1, by: 'pad1' },
+                 pad2: { name: '妹妹', color: '#2', dev: 'pad', joinedAt: 2, updatedAt: 2, by: 'pad2' } },
+      events: {}, deletions: {}, retired: {} });
+    eq('fold: 同设备不同昵称不算同一人', Object.keys(store.get('S9').members).sort(), ['pad1', 'pad2']);
+  }
+  {
+    /* 归属判定：邮箱是强证据，没登录的老记录宁可放宽给本人 */
+    win.Auth = { memberKey: () => 'u:me@x', session: () => ({ email: 'me@x' }) };
+    const d = { members: {
+      'u:me@x': { name: 'T', color: '#fff', acct: 'me@x' },
+      rival: { name: 'T', color: '#fff', acct: 'other@x' },
+      legacy: { name: 'T', color: '#fff' },
+      other: { name: '别人', color: '#123' },
+    }, events: {}, retired: { oldKey: 'u:me@x' } };
+    eq('id: 退休旧键名下的日程算自己', store.owns('oldKey', d), true);
+    eq('id: 同昵称同颜色但邮箱不同，不算自己', store.owns('rival', d), false);
+    eq('id: 未登录留下的同昵称老记录放宽给自己', store.owns('legacy', d), true);
+    eq('id: 别人的日程不是自己', store.owns('other', d), false);
+    eq('id: resolve 把旧键指向后继键', store.resolve(d, 'oldKey'), 'u:me@x');
+  }
+  {
+    /* 绑邮箱时账户名下已有资料（别的设备先登录过）：保留账户那条，冲突交给界面问 */
+    store.upsertSpaceMeta('S8', 'S8');
+    win.Auth = { memberKey: () => 'zDevice', session: () => null };
+    await store.attach('S8', { v: 2, code: 'S8', name: 'S8', createdBy: 'zDevice',
+      members: {
+        zDevice: { name: '本机名', color: '#fff', dev: 'zDevice', joinedAt: 9, updatedAt: 9, by: 'zDevice' },
+        'u:m@x': { name: '账户名', color: '#0a0', joinedAt: 2, updatedAt: 2, by: 'u:m@x' },
+      },
+      events: { a: { id: 'a', ownerId: 'zDevice', title: '本机日程', date: '2026-09-21', updatedAt: 1, by: 'zDevice' } },
+      deletions: {}, retired: {} });
+    const mig = store.migrateIdentity('zDevice', 'u:m@x');
+    const d8 = store.get('S8');
+    eq('migrate: 昵称冲突被报给界面', mig.conflicts.map((c) => [c.code, c.mine, c.theirs]), [['S8', '本机名', '账户名']]);
+    eq('migrate: 不覆盖账户原有的昵称', d8.members['u:m@x'].name, '账户名');
+    eq('migrate: joinedAt 取更早那次', d8.members['u:m@x'].joinedAt, 2);
+    eq('migrate: 本机日程并到账户键', d8.events.a.ownerId, 'u:m@x');
+    eq('migrate: 旧键退休指向账户键', d8.retired.zDevice, 'u:m@x');
+    /* 统一改昵称要落到所有已加入空间，而不是只改当前空间 */
+    win.Auth = { memberKey: () => 'u:m@x', session: () => ({ email: 'm@x' }) };
+    store.setMyName('新昵称');
+    eq('name: 当前空间成员记录已更新', store.get('S8').members['u:m@x'].name, '新昵称');
+    eq('name: 昵称写进本机资料', win.App.me.name, '新昵称');
+    win.App.me.name = 'T';
+  }
+  {
+    /* 换设备登录自动补回空间：靠网盘扫描，云端不落任何凭据 */
+    const acctA = { baseUrl: 'https://dav.a.example/dav', user: 'a@x.com', pass: 'p' };
+    win.Dav.scanCodes = async () => ({ codes: { F1: acctA, GONE: acctA }, errors: [] });
+    win.Dav.getWith = async (c, code) => code === 'F1' ? { status: 200, text: JSON.stringify({
+      v: 2, code: 'F1', name: '找回的空间', createdBy: 'sis',
+      members: { 'u:m@x': { name: '账户里的名字', color: '#0a0', acct: 'm@x', joinedAt: 1, updatedAt: 1, by: 'u:m@x' } },
+      events: {}, deletions: {}, retired: {} }) } : { status: 404 };
+    win.Dav.bindSpace = () => {};
+    win.Auth = { memberKey: () => 'u:m@x', session: () => ({ email: 'm@x' }) };
+    await store.followAccount('u:m@x').then((f) => {
+      eq('follow: 只补回成员表命中自己的空间', f.added, ['F1']);
+      eq('follow: 带回账户里的昵称供弹窗选择', f.nick, '账户里的名字');
+      eq('follow: 空间进了本机列表', store.listSpaces().some((s) => s.code === 'F1'), true);
+      eq('follow: 读不到文件的码被跳过', store.listSpaces().some((s) => s.code === 'GONE'), false);
+    });
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

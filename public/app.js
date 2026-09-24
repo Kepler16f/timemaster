@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.2.6';
+const APP_VERSION = '0.3.0';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）
@@ -39,6 +39,13 @@ window.App = {
 
 /* 当前身份键：已登录=账户（跨设备一致），未登录=本机设备 */
 function myId(){ return (window.Auth && Auth.memberKey()) || App.clientId; }
+
+/* 日程归属的成员记录：身份键换过（登录/退出/换设备）时旧键已退休，
+   顺着退休记录找到现在那条，避免日程显示成「未知」而其实就在某人标签下 */
+function memberOf(data,id){
+  const k=Store.resolve(data,id);
+  return Object.assign({ name:'未知', color:'#999' }, (data&&data.members&&data.members[k]) || {}, { key:k });
+}
 
 function showDeviceId(){ const el=$('#deviceIdShow'); if(el) el.textContent=App.clientId.slice(0,8); }
 
@@ -138,7 +145,16 @@ function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('sh
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function shade(hex,p){ const n=parseInt(hex.slice(1),16); let r=(n>>16)&255,g=(n>>8)&255,b=n&255; r=Math.max(0,Math.min(255,r+p)); g=Math.max(0,Math.min(255,g+p)); b=Math.max(0,Math.min(255,b+p)); return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
 function genCode() { const b = new Uint8Array(4); crypto.getRandomValues(b); return Array.from(b, x=>x.toString(16).padStart(2,'0')).join('').toUpperCase(); }
-function needDav(){ if(!Dav.cfg() || !Dav.cfg().user || !Dav.cfg().pass){ toast('请先在设置中配置网盘'); openSettings(); return false; } return true; }
+/* 网盘账号是按空间绑定的：进某个空间只看它自己那份绑定，不被本机默认账号挡住 */
+function needDav(code){
+  const c = code ? Dav.spaceCfg(code) : Dav.cfg();
+  if(!Dav.usable(c)){
+    toast(code ? '这个空间的网盘账号还没配好（设置 → 配置码 / 网盘同步）' : '请先在设置中配置网盘');
+    openSettings();
+    return false;
+  }
+  return true;
+}
 
 function uiConfirm(title, text, yesText){
   return new Promise((res)=>{
@@ -146,6 +162,28 @@ function uiConfirm(title, text, yesText){
     $('#confirmModal').hidden=false;
     $('#confirmYes').onclick=()=>{ $('#confirmModal').hidden=true; res(true); };
     $('#confirmNo').onclick=()=>{ $('#confirmModal').hidden=true; res(false); };
+  });
+}
+
+/* 需要用户拍板的选择（单选，可带自由输入）：换绑网盘、邮箱合并成一个用户时保留哪个昵称。
+   返回选中的 option.v，或 {text:输入内容}，取消返回 'cancel' */
+function ask({title,text,options,input}){
+  return new Promise((res)=>{
+    const box=$('#askOpts'); box.innerHTML='';
+    $('#askTitle').textContent=title; $('#askText').textContent=text||'';
+    const done=(v)=>{ $('#askModal').hidden=true; res(v); };
+    options.forEach((o)=>{
+      const b=el('button','big-btn ghost ask-opt'); b.type='button';
+      b.innerHTML=`<span class="ask-t">${escapeHtml(o.t)}</span>`+(o.sub?`<span class="ask-sub">${escapeHtml(o.sub)}</span>`:'');
+      b.onclick=()=>done(o.v); box.appendChild(b);
+    });
+    const wrap=$('#askInputWrap'), inp=$('#askInput');
+    wrap.classList.toggle('hidden', !input);
+    $('#askOk').classList.toggle('hidden', !input);
+    if(input){ inp.value=input.value||''; inp.placeholder=input.placeholder||''; }
+    $('#askOk').onclick=()=>{ const v=inp.value.trim(); if(!v) return toast('请先填写'); res({text:v}); $('#askModal').hidden=true; };
+    $('#askCancel').onclick=()=>done('cancel');
+    $('#askModal').hidden=false;
   });
 }
 
@@ -239,7 +277,7 @@ function initStart(){
 
 $('#createBtn').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
 $('#joinBtn').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
-$('#enterLastBtn').onclick=()=>{ const c=localStorage.getItem('tm:lastSpace'); if(c && needDav()) enterSpace(c); };
+$('#enterLastBtn').onclick=()=>{ const c=localStorage.getItem('tm:lastSpace'); if(c && needDav(c)) enterSpace(c); };
 $('#davBtn').onclick=openSettings;
 
 /* ---------- 设置页 ---------- */
@@ -308,40 +346,103 @@ $('#otpVerifyBtn').onclick=async()=>{
     const oldKey=myId();
     await Auth.verifyOtp($('#loginEmail').value, $('#otpCode').value);
     const newKey=myId();
-    if(newKey!==oldKey) Store.migrateIdentity(oldKey, newKey); // 邮箱绑定到当前本地身份，而不是另建账户
-    renderAccountSection(); renderSpaceMgmt();
+    const localName=App.me.name;
+    const mig = newKey!==oldKey ? Store.migrateIdentity(oldKey,newKey) : { conflicts:[] }; // 邮箱绑定到当前本地身份，而不是另建账户
     toast('登录成功，已将本机身份绑定到此邮箱');
+    /* 同一邮箱在别的设备上可能已经加过空间：本机空间列表只是本地记录，
+       扫一遍已知网盘账号的成员表，把这个账户在里面的空间一并补回来 */
+    let found={added:[],nick:''};
+    try{ found = await Store.followAccount(newKey); }catch(e){ console.warn('follow account:',e.message); }
+    /* 两边昵称不一样时不自动挑：合并成一个用户要问账户名称 */
+    const theirs = found.nick || (mig.conflicts[0]||{}).theirs;
+    if(theirs && theirs!==localName){
+      const pick=await ask({
+        title:'这个邮箱在别的设备上叫「'+theirs+'」',
+        text:'本机身份要和它合并成一个用户（同一个人的日程归到一条）。选一个显示名称，成员标签和日程归属都会用它。',
+        options:[{v:'mine',t:'用本机现在的：'+localName},{v:'theirs',t:'用账户已有的：'+theirs}],
+        input:{placeholder:'或输入一个新的账户名称'},
+      });
+      const name = pick==='mine' ? localName : pick==='theirs' ? theirs : ((pick&&pick.text)||localName);
+      if(name && name!==App.me.name) Store.setMyName(name);
+    }
+    renderAccountSection(); renderSpaceMgmt();
+    if(found.added && found.added.length) toast('已补回该邮箱加入的 '+found.added.length+' 个空间');
     if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
+    Store.scheduleSync();
   }catch(e){ toast(e.message); }
   finally{ btn.disabled=false; }
 };
+/* 退出登录只改本机身份，不动云端成员记录：
+   别的设备可能正用这个邮箱写日程，把 u:邮箱 改名回本机设备号等于把别人的成员条目抢过来，
+   表现就是「同一个账号又显示成两个」。已写下的日程靠本机历史身份键照样认作自己的。 */
 $('#logoutBtn').onclick=()=>{
-  const oldKey=myId();
   Auth.clear();
-  const newKey=myId();
-  if(newKey!==oldKey) Store.migrateIdentity(oldKey, newKey); // 退出后并回本机身份，别在空间里留下第二个账号
-  renderAccountSection(); toast('已退出，回到本机身份');
-  if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
+  renderAccountSection();
+  toast('已退出，回到本机身份（此前的日程仍归在这个邮箱名下）');
+  if(state.code && Store.get(state.code)){ renderPeopleTags(); renderCalendar(); }
+};
+/* 空间列表丢了（换机、清数据、只用过配置码）：按成员表把网盘上属于我的空间找回来 */
+$('#scanSpacesBtn').onclick=async()=>{
+  const btn=$('#scanSpacesBtn');
+  if(!Dav.usable(Dav.cfg()) && !Dav.knownAccounts().length){ toast('请先配置网盘'); openSettings(); return; }
+  btn.disabled=true; const old=btn.textContent; btn.textContent='🔍 正在扫描…';
+  try{
+    const r=await Store.followAccount(myId());
+    renderSpaceMgmt();
+    toast(r.added.length ? '找回 '+r.added.length+' 个空间（扫了 '+r.scanned+' 份文件）'
+      : '扫了 '+r.scanned+' 份文件，成员表里没有你现在的身份（'+myId().slice(0,10)+'）——换过邮箱登录的话，先登录再扫');
+  }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; btn.textContent=old; }
 };
 
-/* 配置码 B/C 共存：手动表单 = 方式B；配置码 = 方式C 一步导入 */
+/* 配置码 B/C 共存：手动表单 = 方式B（本机默认账号）；配置码 = 方式C。
+   方式C 只把它带到「它自己那个空间」上：本机已经配过网盘时绝不再覆盖默认账号，
+   否则一粘家人的配置码，自己的空间立刻读不到、还在别人网盘里另建一份同名文档，
+   两个人从此各写各的（用户反馈的「同步不上新加入的用户」）。 */
 $('#cfgImportBtn').onclick=()=>{ $('#cfgImportText').value=''; $('#cfgImportModal').hidden=false; };
 $('#cfgImportCancel').onclick=()=>{ $('#cfgImportModal').hidden=true; };
 $('#cfgImportSave').onclick=async()=>{
+  const btn=$('#cfgImportSave'); btn.disabled=true;
   try{
-    const r = Dav.importCode($('#cfgImportText').value);
-    $('#cfgImportModal').hidden=true; toast('配置码已导入，正在测试连接…');
+    const r = Dav.parseCode($('#cfgImportText').value);
+    const code = r.spaceCode;
+    const hadAcct = Dav.usable(Dav.cfg());
+    if(!hadAcct) Dav.saveConfig(r.cfg);        // 本机还没配网盘：配置码就当默认账号，首次体验不变
+    else if(!code) Dav.rememberAccount(r.cfg); // 没带房间：只记住这个账号，不动默认
+    if(code){
+      const cur = Dav.spaceCfg(code);
+      if(Dav.usable(cur) && !Dav.sameAccount(cur, r.cfg)){
+        const name=(Store.get(code)||{}).name||code;
+        const pick=await ask({
+          title:'「'+name+'」已经存在另一个网盘上',
+          text:'本机原来用配置码进过这个空间，它存放在 '+Dav.acctLabel(code)+'；这次导入的配置码指向 '+Dav.acctLabelOf(r.cfg)+'。保持原样才不会读错文件、也不会把数据写到两个网盘上。',
+          options:[
+            { v:'keep', t:'保持原有绑定（推荐）', sub:'继续读 '+Dav.acctLabel(code)+' 上的那份数据' },
+            { v:'new', t:'改用配置码里的账号', sub:'仅在家人已经把空间搬到 '+Dav.acctLabelOf(r.cfg)+' 时选' },
+          ],
+        });
+        if(pick==='cancel') return;
+        if(pick==='new') Dav.bindSpace(code, r.cfg);
+      } else {
+        Dav.bindSpace(code, r.cfg);
+      }
+    }
+    $('#cfgImportModal').hidden=true;
+    toast(code ? '配置码已导入，正在测试该空间的连接…' : '已记住这个网盘账号');
     try{
-      await Dav.test();
-      if(r.spaceCode){ await joinSpace(r.spaceCode); }
-      else { toast('该配置码没带房间，请在首页创建或用邀请码加入'); $('#settingsBack').onclick(); }
+      await Dav.test(code || null);
+      if(code){ await joinSpace(code); }
+      else if(!hadAcct){ toast('该配置码没带房间，请在首页创建或用邀请码加入'); $('#settingsBack').onclick(); }
+      else toast('该配置码没带房间：新建空间会用本机默认账号 '+Dav.acctLabel()+'，若要用它请先把默认账号改成这个');
     }catch(e){ toast(e.message); }
   }catch(e){ toast(e.message); }
+  finally{ btn.disabled=false; }
 };
 $('#cfgExportBtn').onclick=()=>{
   try{
     const sc = state.code || localStorage.getItem('tm:lastSpace') || '';
     $('#cfgExportText').value = Dav.exportCode(sc);
+    $('#cfgExportAcct').textContent = '这份配置码里的网盘账号：' + Dav.acctLabel(sc) + (sc ? '' : '（本机默认账号，还没带上某个空间）');
     $('#cfgExportModal').hidden=false;
     if(!sc) toast('本机还没有可用房间，对方导入后需自行创建/加入');
   }catch(e){ toast(e.message); }
@@ -371,6 +472,7 @@ $('#spaceSave').onclick=async()=>{
       const name=$('#spaceNameInput').value.trim()||'共享日程';
       const code=genCode();
       const data=Store.createSpace(code,name);
+      Dav.bindSpace(code, Dav.cfg()); /* 新建的空间钉在本机默认账号上：之后改默认账号也不会把它带走 */
       const p=await Dav.put(code, JSON.stringify(data), null); /* 仅新建：已存在就是撞码，不能覆盖别人的空间 */
       if(p.status===412){ toast('邀请码刚好撞车了，请再点一次创建'); return; }
       Store.upsertSpaceMeta(code,name);
@@ -386,7 +488,7 @@ $('#spaceSave').onclick=async()=>{
   finally{ btn.disabled=false; }
 };
 async function joinSpace(code){
-  if(!needDav()) return;
+  if(!needDav(code)) return;
   /* 加入不再自己 PUT 整篇文档：先合并进本机缓存，写回交给 syncCode（它在覆盖前会重新拉全量合并），
      否则后来的人会把前一个人刚写进去的成员/日程一起盖掉 */
   const { data, etag } = await Store.openRemote(code);
@@ -407,15 +509,19 @@ function spaceItems(listEl, onClick){
     const st = Store.status(s.code);
     const item=document.createElement('div');
     item.className='space-item'+(s.code===state.code?' current':'');
+    /* 空间存在哪个网盘上必须显示出来：多人混合「自己的账号 + 家人的配置码」时，
+       这就是「为什么看不见新加进来的人」的第一线索 */
+    const acctNote = Dav.isDefaultAcct(s.code) ? '' : ' · 网盘 '+Dav.acctLabel(s.code);
+    const errNote = st.missing && st.exists ? ' · ⚠ '+escapeHtml(st.lastError||'网盘上找不到该空间文件') : '';
     item.innerHTML=`<div class="si-top">
         <div class="si-name">${escapeHtml(s.name||'共享空间')}</div>
         ${s.code===state.code?'<span class="si-now">使用中</span>':''}
       </div>
-      <div class="si-meta">${s.code} · ${data?Object.keys(data.members).length:0} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}</div>`;
+      <div class="si-meta">${s.code} · ${data?Object.keys(data.members).length:0} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}${acctNote}${errNote}</div>`;
     if(onClick) item.onclick=()=>onClick(s);
     else {
       /* 整张卡片可点：新建/加入空间后在设置里点一下就切过去 */
-      item.onclick=()=>{ if(s.code!==state.code && needDav()) enterSpace(s.code); };
+      item.onclick=()=>{ if(s.code!==state.code && needDav(s.code)) enterSpace(s.code); };
       const btns=document.createElement('div'); btns.className='si-btns'; item.appendChild(btns);
       const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
       clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
@@ -592,7 +698,11 @@ function updateSyncChip(){
   const s=Store.status(state.code); const el=$('#syncState');
   const btn=$('#syncBtn'); if(btn) btn.classList.toggle('spinning', !!s.syncing);
   if(!s.exists){ el.textContent=''; return; }
-  el.textContent = s.syncing? '同步中…' : s.dirty? '待同步（离线可写）' : s.lastSync? '已同步 '+new Date(s.lastSync).toLocaleTimeString() : '';
+  if(s.syncing) el.textContent='同步中…';
+  /* 云端读不到这个文件（多半是网盘账号不对）：把账号摊开说，别让「待同步」一直挂着让人猜 */
+  else if(s.missing && s.dirty) el.textContent='⚠ 待写入：'+(s.lastError||'网盘上找不到该空间文件');
+  else if(s.missing) el.textContent='⚠ '+(s.lastError||'网盘上找不到该空间文件');
+  else el.textContent = s.dirty? '待同步（离线可写）' : s.lastSync? '已同步 '+new Date(s.lastSync).toLocaleTimeString() : '';
 }
 $('#syncBtn').onclick=()=>{
   if(!state.code) return;
@@ -651,7 +761,8 @@ function occurrences(data, fromStr, toStr){
   const byDay={};
   Object.keys(data.events).forEach(id=>{
     const ev=data.events[id];
-    if(!memberOn(ev.ownerId) || !data.members[ev.ownerId]) return;
+    const owner=Store.resolve(data, ev.ownerId);
+    if(!memberOn(owner) || !data.members[owner]) return;
     IcsParser.expandOccurrences(ev, fromStr, toStr).forEach(ds=>{ (byDay[ds]=byDay[ds]||[]).push(ev); });
   });
   return byDay;
@@ -709,12 +820,24 @@ function renderMonth(data, cal){
     const {marks,evs}=splitMarks(byDay[ds]||[]);
     if(marks.length){ const dm=el('div','daymark '+marks[0].type, marks[0].type==='work'?'班':'休'); cell.appendChild(dm); }
     if(evs.length){
-      const colors=[]; const seen={};
-      evs.forEach((e)=>{ const c=data.members[e.ownerId].color; if(!seen[c]){ seen[c]=1; colors.push(c); } });
+      /* 色块=「人」（一人一块，同一人当天几条只占一块），右上角数字=「条」，
+         +N=还有几个人没画下。以前点按人去重、+N 却按事件条数算，
+         两个人写 6 条就显示成「2 个点 +4」，两个数都对不上实际日程 */
+      const people=[]; const byId={};
+      evs.forEach((e)=>{
+        const oid=Store.resolve(data,e.ownerId);
+        if(byId[oid]){ byId[oid].n++; return; }
+        byId[oid]={ id:oid, n:1, color:(data.members[oid]||{}).color||'var(--weak2)' };
+        people.push(byId[oid]);
+      });
       const dots=el('div','dots');
-      colors.slice(0,4).forEach((c)=>{ const d=el('span','mdot'); d.style.background=c; dots.appendChild(d); });
-      if(evs.length>4) dots.appendChild(el('span','mdot more','+'+(evs.length-4)));
+      people.slice(0,4).forEach((p)=>{
+        const d=el('span','mdot'+(p.n>1?' many':'')); d.style.background=p.color; dots.appendChild(d);
+      });
+      if(people.length>4) dots.appendChild(el('span','mdot more','+'+(people.length-4)));
       cell.appendChild(dots);
+      if(evs.length>1) cell.appendChild(el('div','cell-cnt',evs.length+'条'));
+      cell.title=people.map((p)=>((data.members[p.id]||{}).name||'未知')+' '+p.n+' 条').join(' · ');
     }
     cell.onclick=()=>{ state.day=ds; syncYm(); renderCalendar(); };
     cal.appendChild(cell);
@@ -750,7 +873,7 @@ function renderSpanBars(data, evs){
   const ids=Object.keys(byOwner); if(!ids.length) return null;
   const tl=el('div','tl');
   ids.forEach((id)=>{
-    const m=data.members[id]||{name:'未知',color:'#999'};
+    const m=memberOf(data,id);
     const row=el('div','tl-row');
     row.appendChild(el('span','tl-name',m.name+(Store.owns(id,data)?'（我）':'')));
     const track=el('span','tl-track');
@@ -775,7 +898,7 @@ function renderSpanBars(data, evs){
 }
 
 function evCard(data, e, ds){
-  const owner=data.members[e.ownerId]||{name:'未知',color:'#999'};
+  const owner=memberOf(data,e.ownerId);
   const card=el('div','ev-card');
   card.style.borderLeftColor=owner.color;
   const time=e.type!=='normal' ? (e.type==='work'?'上班':'休息') : (isAllDay(e)?'全天':`${e.start}${e.end?'–'+e.end:''}`);
@@ -856,7 +979,7 @@ function renderTimeGrid(data, cal, days, fresh){
     marks.forEach((m)=>{ const chip=el('span','ad-chip',(m.type==='work'?'班 ':'休 ')+m.title);
       chip.style.background=m.type==='work'?'var(--work-fg)':'var(--rest-fg)'; chip.onclick=()=>openDetail(m,data,ds); cell.appendChild(chip); });
     evs.filter(isAllDay).forEach((e)=>{
-      const m=data.members[e.ownerId]||{color:'#999'};
+      const m=memberOf(data,e.ownerId);
       const chip=el('span','ad-chip',e.title); chip.style.background=m.color; chip.onclick=()=>openDetail(e,data,ds);
       cell.appendChild(chip);
     });
@@ -928,7 +1051,7 @@ function layoutLanes(evs){
 }
 
 function timedEvBlock(data, it, ds){
-  const e=it.e, m=data.members[e.ownerId]||{name:'未知',color:'#999'};
+  const e=it.e, m=memberOf(data,e.ownerId);
   const b=el('div','tg-ev');
   const raw=it.t-it.s, span=Math.max(raw,40); /* 一小时以内的块连一行字都放不下：先给个最小高度，剩下的靠块内滚动看全 */
   const tight=raw<=35;
@@ -993,7 +1116,7 @@ setInterval(()=>{ // 时间红线自己走，不必整页重绘
 let detailEvent=null, detailDate=null;
 function openDetail(ev, data, ds){
   detailEvent=ev; detailDate=ds||ev.date;
-  const owner=data.members[ev.ownerId]||{name:'未知',color:'#999'};
+  const owner=memberOf(data,ev.ownerId);
   $('#detailDot').style.background=owner.color;
   $('#detailTitle').textContent=ev.title;
   const lines=[];
@@ -1108,9 +1231,10 @@ function fillImportOwner(){
   const data=Store.get(state.code); if(!data) return;
   Object.keys(data.members).forEach(id=>{
     const o=document.createElement('option'); o.value=id;
-    o.textContent=data.members[id].name+(id===myId()?'（我）':''); sel.appendChild(o);
+    o.textContent=data.members[id].name+(Store.owns(id,data)?'（我）':''); sel.appendChild(o);
   });
-  sel.value=myId();
+  sel.value=Store.resolve(data,myId());
+  if(sel.selectedIndex<0 && sel.options.length) sel.selectedIndex=0; // 自己还没进成员表时给个默认
 }
 $('#importBtn').onclick=()=>{ if(!state.code) return toast('请先进入一个空间'); fillImportOwner(); $('#permBtn').hidden=true; $('#harCalTip').hidden=!CalBridge.isHarmony(); $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
@@ -1144,7 +1268,7 @@ $('#writeBackBtn').onclick=async()=>{
        否则会被复制进本应用自己的日历，变成同一件事的两份 */
     .filter(e=>!CalBridge.sysHandle(e.sourceUid))
     /* 写进系统日历时注明是谁的日程，回读再导入时也能靠这行标记跳过自己的条目 */
-    .map(e=>Object.assign({}, e, { ownerName:(data.members[e.ownerId]||{}).name||'' }));
+    .map(e=>Object.assign({}, e, { ownerName:memberOf(data,e.ownerId).name }));
   if(!list.length) return toast('没有可回写的日程');
   try{
     await CalBridge.ensurePermission();

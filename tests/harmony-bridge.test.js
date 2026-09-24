@@ -26,6 +26,7 @@ const files = new Map(); // pathname -> { content, etag, dir }
 let ver = 0;
 let serveEtag = true; // 有些网盘/反向代理不透传 etag，用来测退化路径
 let lastPutHeaders = null;
+let lastUrl = null; // 最近一次请求的完整 URL：验证「这个空间读的是绑定的那个网盘账号」
 const editCalls = []; // 假原生侧收到的「写回原日历」调用
 const b64 = (s) => Buffer.from(s, 'utf8').toString('base64');
 function done(id, err, resJson) { setTimeout(() => win.__harmonyNativeCb(id, err, resJson == null ? null : resJson), 0); }
@@ -34,10 +35,16 @@ function handleHttp(id, payload) {
   let r;
   try {
     const { method, url, headers = {}, body = null } = JSON.parse(payload);
-    const p = new win.URL(url).pathname;
+    const u = new win.URL(url);
+    const p = u.pathname;
+    lastUrl = url;
     if (method === 'PUT') lastPutHeaders = headers;
     if (method === 'PROPFIND') {
-      r = { status: 207, headers: {}, body: '<?xml version="1.0"?><d:multistatus xmlns:d="DAV:"></d:multistatus>' };
+      /* Depth:1 列目录：把该前缀下的一层条目按坚果云的 /dav/... href 形式吐回去 */
+      const kids = Array.from(files.keys()).filter((k) => k.startsWith(p) && k !== p
+        && !k.slice(p.length).includes('/'));
+      const bodyXml = kids.map((k) => `<d:response><d:href>${u.pathname === '/' ? '/dav' : ''}${k}</d:href></d:response>`).join('');
+      r = { status: 207, headers: {}, body: `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">${bodyXml}</d:multistatus>` };
     } else if (method === 'MKCOL') {
       if (files.has(p)) r = { status: 405, headers: {}, body: '' };
       else { files.set(p, { content: '', etag: 'dir' + (++ver), dir: true }); r = { status: 201, headers: {}, body: '' }; }
@@ -192,6 +199,81 @@ const ok = (name, cond) => eq(name, !!cond, true);
   const t7 = Object.values(JSON.parse((await Dav.get('NOETAG')).text).events).map((e) => e.title);
   ok('noEtag: 两轮事件都在云端', t7.includes('第一轮') && t7.includes('第二轮'));
   serveEtag = true;
+
+  /* ---------- 8. 网盘账号按空间绑定：配置码只换那一个空间的账号 ---------- */
+  const ACCT_ME = { baseUrl: 'https://dav.jianguoyun.com/dav', user: 'me@x.com', pass: 'app-pass' };
+  const ACCT_SIS = { baseUrl: 'https://dav.sis.example/dav', user: 'sis@x.com', pass: 'pw2' };
+  Dav.bindSpace('SIS01', ACCT_SIS);
+  eq('bind: 已绑定的空间用绑定账号', Dav.spaceCfg('SIS01').user, 'sis@x.com');
+  eq('bind: 空间码大小写不影响查找', Dav.spaceCfg('sis01').user, 'sis@x.com');
+  eq('bind: 未绑定空间仍用本机默认账号', Dav.spaceCfg('ABCD1234').user, 'me@x.com');
+  eq('bind: 本机默认账号没被配置码顶掉', Dav.cfg().user, 'me@x.com');
+  eq('bind: 未绑定即默认账号', Dav.isDefaultAcct('ABCD1234'), true);
+  eq('bind: 绑到别的账号就不再是默认', Dav.isDefaultAcct('SIS01'), false);
+  ok('bind: 同一账号比较', Dav.sameAccount(ACCT_SIS, { baseUrl: 'dav.sis.example/dav/', user: 'sis@x.com' }));
+  await Dav.get('SIS01');
+  ok('bind: 该空间的请求发到绑定账号的域名', /dav\.sis\.example/.test(lastUrl));
+  eq('label: 网盘账号标签取得懂（me@dav 那种写法弃用）', Dav.acctLabel('SIS01'), 'sis@x.com@sis');
+  eq('label: 坚果云的 dav 子域不算服务名', Dav.acctLabel('ABCD1234'), 'me@x.com@jianguoyun');
+  const codeSis = Dav.exportCode('SIS01');
+  const parsed = Dav.parseCode(codeSis);
+  eq('cfgcode: 导出的是那个空间所在的账号', parsed.cfg.user, 'sis@x.com');
+  eq('cfgcode: 带出空间码', parsed.spaceCode, 'SIS01');
+  eq('cfgcode: 只解析不落盘', Dav.cfg().user, 'me@x.com');
+  let badCode = false;
+  try { Dav.parseCode('TM1:@#%!'); } catch (e) { badCode = true; }
+  eq('cfgcode: 乱码配置码报错而不是静默', badCode, true);
+  const kn = Dav.knownAccounts();
+  eq('accts: 本机默认账号排第一', kn[0].user, 'me@x.com');
+  eq('accts: 已知账号去重后的数量', kn.map((c) => c.user).sort(), ['me@x.com', 'sis@x.com']);
+
+  /* ---------- 9. 扫描网盘找回空间（列目录 + 逐账号试） ---------- */
+  const listed = await Dav.listCodes(ACCT_ME);
+  ok('list: PROPFIND 解析出同步目录下的空间码', listed.includes('ABCD1234') && listed.includes('SYNC5'));
+  eq('list: 目录本身不算空间', listed.includes('SHARED-CALENDAR'), false);
+  const scan = await Dav.scanCodes();
+  eq('scan: 空目录/缺目录的账号不整体报错', scan.errors, []);
+  eq('scan: 同一个码先命中的账号胜出（默认账号排前）', scan.codes.ABCD1234.user, 'me@x.com');
+
+  /* ---------- 10. 换设备登录：扫网盘把该账户已加入的空间补回本机 ---------- */
+  {
+    const em = { v: 2, code: 'FIND10', name: '姐姐建的房', createdBy: 'sis@x',
+      members: { 'u:me@x.com': { name: '鸿蒙测试', color: '#4ECDC4', acct: 'me@x.com', dev: 'harDevice', joinedAt: 1, updatedAt: 1, by: 'u:me@x.com' } },
+      events: {}, deletions: {}, retired: {} };
+    await Dav.put('FIND10', JSON.stringify(em), null);
+    eq('follow: 找回来之前本机没有这个空间', Store.listSpaces().some((s) => s.code === 'FIND10'), false);
+    const f10 = await Store.followAccount('u:me@x.com');
+    ok('follow: 扫到了这个空间', f10.added.includes('FIND10'));
+    eq('follow: 带回复读昵称', f10.nick, '鸿蒙测试');
+    eq('follow: 空间元信息已写回本机', Store.listSpaces().some((s) => s.code === 'FIND10'), true);
+    eq('follow: 找回的空间绑在原来那个网盘账号上', Dav.spaceCfg('FIND10').user, 'me@x.com');
+    ok('follow: 数据落到本机', !!Store.get('FIND10'));
+    const again = await Store.followAccount('u:me@x.com');
+    eq('follow: 再扫一遍不会重复添加', again.added.includes('FIND10'), false);
+  }
+
+  /* ---------- 11. 云端文件不见了：脏数据只能「仅新建」写回，干净数据连续两轮才判删除 ---------- */
+  {
+    Store.addEvent('SYNC5', { title: '云端没了要建回来', date: '2026-10-02' });
+    eq('lost: 写回前是脏的', Store.status('SYNC5').dirty, true);
+    files.delete('/dav/shared-calendar/SYNC5.json');
+    await Store.syncCode('SYNC5');
+    eq('lost: 仅新建写回后转干净', Store.status('SYNC5').dirty, false);
+    eq('lost: PUT 带 If-None-Match:*（绝不无条件覆盖）', lastPutHeaders['If-None-Match'], '*');
+    eq('lost: 没有夹带 If-Match', lastPutHeaders['If-Match'], undefined);
+    ok('lost: 云端文件已重建', files.has('/dav/shared-calendar/SYNC5.json'));
+    const t11 = Object.values(JSON.parse(files.get('/dav/shared-calendar/SYNC5.json').content).events).map((e) => e.title);
+    ok('lost: 待写入的日程随之回来', t11.includes('云端没了要建回来'));
+
+    let goneCode = '';
+    Store.onSpaceGone((c) => { goneCode = c; });
+    files.delete('/dav/shared-calendar/SYNC5.json');
+    await Store.syncCode('SYNC5'); // 第一轮：只标记，不通知
+    eq('gone: 首轮 404 不判删除', goneCode, '');
+    eq('gone: 干净时 404 绝不写回云端', files.has('/dav/shared-calendar/SYNC5.json'), false);
+    await Store.syncCode('SYNC5'); // 第二轮：确认连续 404 才通知「被创建者删除」
+    eq('gone: 次轮才通知删除', goneCode, 'SYNC5');
+  }
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

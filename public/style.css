@@ -172,6 +172,9 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .dots { display: flex; flex-wrap: wrap; gap: 2px; justify-content: center; max-height: 20px; overflow: hidden; }
 .mdot { width: 7px; height: 7px; border-radius: 2px; flex: 0 0 auto; }
 .mdot.more { width: auto; height: auto; font-size: 9px; line-height: 1; color: var(--weak2); border-radius: 0; }
+/* 同人当天多条：色块右下拖出一层「叠了两张卡」的影子 */
+.mdot.many { box-shadow: 1.5px 1.5px 0 -1.5px var(--weak2); }
+.cell-cnt { font-size: 9px; line-height: 1.1; color: var(--weak2); }
 
 /* ---------- 月视图下方的当天日程卡列表 ---------- */
 .agenda { margin: 12px 12px 0; }
@@ -307,6 +310,12 @@ html[data-theme="dark"] .modal { box-shadow: 0 -10px 44px rgba(0,0,0,.5); }
 .time-row label { flex: 1; }
 .import-tip { font-size: 12px; color: var(--text-weak); line-height: 1.65; }
 .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
+/* ---------- 单选提问弹层 ---------- */
+.ask-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.ask-opts + .set-field { margin-top: 14px; }
+.ask-opt { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; line-height: 1.4; }
+.ask-t { font-size: 15px; font-weight: 600; color: var(--text); }
+.ask-sub { font-size: 12px; font-weight: 400; color: var(--text-weak); }
 input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); border-radius: 14px; background: var(--tint); font-size: 13px; color: var(--text-weak); }
 .color-picker { display: flex; flex-wrap: wrap; gap: 10px; }
 .color-swatch { width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 2px solid var(--swatch-ring); box-shadow: 0 0 0 1px var(--line); }
@@ -339,6 +348,7 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
   .calendar.month .date-num { width: 28px; height: 28px; font-size: 15px; }
   .calendar.month .mdot { width: 9px; height: 9px; }
   .calendar.month .dots { max-height: 26px; gap: 3px; }
+  .calendar.month .cell-cnt { font-size: 10.5px; }
   .modal-mask { align-items: center; padding: 18px; }
   .modal { border-radius: 26px; max-width: 420px; padding-bottom: 22px; box-shadow: 0 16px 48px rgba(0,0,0,.18); animation: popIn .25s cubic-bezier(.25,.85,.3,1); }
   .modal::before { display: none; }
@@ -433,6 +443,8 @@ textarea:focus { border-color: var(--accent); background: var(--field-bg); box-s
   .daymark { font-size: 9px; padding: 0 3px; }
   .dots { max-height: 8px; gap: 1px; }
   .mdot { width: 6px; height: 6px; }
+  /* 横屏/短屏一行只有 30px 出头，再塞「N条」就把色块挤没了，这里只保色块 */
+  .cell-cnt { display: none; }
   .tg-hcell { padding: 2px 0 3px; font-size: 11px; }
   .tg-hcell .dnum { min-width: 20px; font-size: 13px; }
   .tg-hcell.wide { padding: 3px 6px; gap: 1px 6px; }
