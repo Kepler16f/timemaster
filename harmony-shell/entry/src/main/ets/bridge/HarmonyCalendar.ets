@@ -157,8 +157,10 @@ function buildEvent(title: string, w: WireEv, marker: string, startMs: number, e
 
 /* 改的是别人日历里的条目，description 按用户填的内容原样写回，
    绝不能盖 TM_PREFIX——否则 writeBack 会把它当本应用自建日程清理掉 */
-function editEvent(w: EditReq, startMs: number, endMs: number): calendarManager.Event {
+function editEvent(w: EditReq, evId: number, startMs: number, endMs: number): calendarManager.Event {
   const ev: Record<string, Object> = {
+    /* updateEvent(event) 靠 Event 自己的 id 定位要改哪条，没有单独的 id 形参 */
+    'id': evId,
     'title': w.title || '未命名',
     'type': EVENT_TYPE_NORMAL,
     'startTime': startMs,
@@ -453,7 +455,7 @@ export class HarmonyCalendar {
       endMs += DAY_MS;
     }
     await labeled('确认原日程仍在', () => findExisting(cal, evId, Number(w.origMs) || startMs));
-    await labeled('写回「' + calName(cal) + '」', () => cal.updateEvent(evId, editEvent(w, startMs, endMs)));
+    await labeled('写回「' + calName(cal) + '」', (): Promise<void> => cal.updateEvent(editEvent(w, evId, startMs, endMs)));
     return JSON.stringify({ updated: 1, calendar: calName(cal) });
   }
 
