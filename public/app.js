@@ -156,9 +156,11 @@ function needDav(code){
   return true;
 }
 
-function uiConfirm(title, text, yesText){
+/* noCancel=true：只有一顆「知道了」的告知型弹层（被移出空间这种没有回头路可问的事） */
+function uiConfirm(title, text, yesText, noCancel){
   return new Promise((res)=>{
     $('#confirmTitle').textContent=title; $('#confirmText').textContent=text; $('#confirmYes').textContent=yesText||'确认';
+    $('#confirmNo').classList.toggle('hidden', !!noCancel);
     $('#confirmModal').hidden=false;
     $('#confirmYes').onclick=()=>{ $('#confirmModal').hidden=true; res(true); };
     $('#confirmNo').onclick=()=>{ $('#confirmModal').hidden=true; res(false); };
@@ -411,7 +413,13 @@ $('#cfgImportSave').onclick=async()=>{
     else if(!code) Dav.rememberAccount(r.cfg); // 没带房间：只记住这个账号，不动默认
     if(code){
       const cur = Dav.spaceCfg(code);
-      if(Dav.usable(cur) && !Dav.sameAccount(cur, r.cfg)){
+      if(Store.get(code) && Dav.usable(cur)){
+        /* 先用邀请码进来、事后才粘配置码：本机这个账号已经读得到那份文档，
+           就继续用本地已登录的网盘同步，不再问一遍改绑，也不会多出第二个同名空间 */
+        Store.claimAdmin(code)
+          ? toast('这个空间本机已在同步：继续用原来的网盘账号，并已按配置码把你认作管理员')
+          : toast('这个空间本机已在同步：继续用原来的网盘账号（管理员资格由创建者给收，本次没有改动）');
+      } else if(Dav.usable(cur) && !Dav.sameAccount(cur, r.cfg)){
         const name=(Store.get(code)||{}).name||code;
         const pick=await ask({
           title:'「'+name+'」已经存在另一个网盘上',
@@ -423,6 +431,7 @@ $('#cfgImportSave').onclick=async()=>{
         });
         if(pick==='cancel') return;
         if(pick==='new') Dav.bindSpace(code, r.cfg);
+        else Store.claimAdmin(code);
       } else {
         Dav.bindSpace(code, r.cfg);
       }
@@ -521,14 +530,14 @@ function spaceItems(listEl, onClick){
       </div>
       <div class="si-meta">${s.code} · ${liveN} 人${st.lastSync?' · '+new Date(st.lastSync).toLocaleTimeString():''}${acctNote}${errNote}</div>`;
     if(onClick) item.onclick=()=>onClick(s);
-    else {
-      /* 整张卡片可点：新建/加入空间后在设置里点一下就切过去 */
-      item.onclick=()=>{ if(s.code!==state.code && needDav(s.code)) enterSpace(s.code); };
-      const btns=document.createElement('div'); btns.className='si-btns'; item.appendChild(btns);
+    else item.onclick=()=>{ if(s.code!==state.code && needDav(s.code)) enterSpace(s.code); };
+    /* 首页与设置页都给出「成员」入口：看名单不是管理权限，不该只有设置页才有 */
+    const btns=document.createElement('div'); btns.className='si-btns'; item.appendChild(btns);
+    const mb=document.createElement('button'); mb.className='si-btn'; mb.textContent='成员'; mb.title='查看成员与管理员';
+    mb.onclick=(ev2)=>{ ev2.stopPropagation(); openMemberModal(s.code); };
+    btns.appendChild(mb);
+    if(!onClick){
       const am=Store.isManager(s.code), role=Store.role(s.code);
-      const mb=document.createElement('button'); mb.className='si-btn'; mb.textContent='成员'; mb.title='查看成员与管理员';
-      mb.onclick=(ev2)=>{ ev2.stopPropagation(); openMemberModal(s.code); };
-      btns.appendChild(mb);
       if(am){
         const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
         clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
@@ -645,41 +654,51 @@ function openMemberModal(code) {
 }
 function renderMembers() {
   const box = $('#memberList'); box.innerHTML = '';
-  const am = Store.isManager(memberCode);
-  $('#memberHint').textContent = am
-    ? '你是' + ROLE_ZH[Store.role(memberCode)] + '：可以移出普通成员。网盘上没有服务器，被移出的人再输一次邀请码仍然能回来。'
-    : '创建者，以及和创建者用同一个网盘账号的人（拿配置码进来的家人）是管理员，可以移出普通成员。';
-  const list = Store.members(memberCode);
-  if (!list.length) { box.innerHTML = '<p class="set-note">还没有成员记录。</p>'; return; }
-  list.forEach((m) => {
+  const my = Store.role(memberCode);
+  $('#memberHint').textContent = my === 'creator'
+    ? '你是创建者：可以把某人设为管理员，也能撤销任何人的管理员资格（撤销后只有你能再给回去）；管理员和普通成员你都能移出。网盘上没有服务器，被移出的人再输一次邀请码仍然能回来。'
+    : Store.isManager(memberCode)
+      ? '你是管理员：可以移出普通成员，管理员资格由创建者给收。网盘上没有服务器，被移出的人再输一次邀请码仍然能回来。'
+      : '管理员资格由创建者授予、也由创建者撤销：创建者本人、和创建者用同一个网盘账号的人（拿配置码进来的家人）、以及被创建者指定的人，可以移出普通成员。';
+  const { rows, notices } = Store.lookMembers(memberCode);
+  if (!rows.length) { box.innerHTML = '<p class="set-note">还没有成员记录。</p>'; return; }
+  rows.forEach((m) => {
     const row = document.createElement('div');
     row.className = 'member-row' + (m.out ? ' out' : '');
     row.innerHTML = `<span class="dot" style="background:${escapeHtml(m.color || '#999')}"></span>
       <span class="mr-name">${escapeHtml(m.name)}${m.mine ? '（我）' : ''}</span>
       <span class="badge${m.role !== 'member' ? ' mr-role' : ''}">${m.out ? (m.outBy && m.outBy !== m.id ? '已被移出' : '已退出') : ROLE_ZH[m.role]}</span>
       <span class="mr-meta">${m.events} 条 · ${m.joinedAt ? new Date(m.joinedAt).toLocaleDateString() : '加入时间未知'}</span>`;
-    if (Store.canKick(memberCode, m.id)) {
+    const act = Store.adminAction(memberCode, m.id);
+    if (act) {
       const btn = document.createElement('button');
-      btn.className = 'si-btn danger'; btn.textContent = '移出';
+      btn.className = 'si-btn'; btn.textContent = act === 'set' ? '设为管理员' : '取消管理员';
       btn.onclick = async () => {
-        const data = Store.get(memberCode) || {};
-        if (!await uiConfirm('移出成员', `把「${m.name}」移出「${data.name || memberCode}」？TA 名下的日程会保留（仍显示 TA 的名字），TA 本机下次同步会收到移出通知。`, '移出')) return;
         try {
-          Store.kickMember(memberCode, m.id);
+          Store.setAdmin(memberCode, m.id, act === 'set');
           await Store.syncCode(memberCode);
-          toast('已移出，稍后同步给其他成员');
-          renderMembers(); renderSpaceMgmt();
+          toast(act === 'set' ? '已把 ' + m.name + ' 设为管理员' : '已取消 ' + m.name + ' 的管理员');
+          renderMembers();
         } catch (e) { toast(e.message); }
       };
       row.appendChild(btn);
     }
+    if (Store.canKick(memberCode, m.id)) {
+      const btn = document.createElement('button');
+      btn.className = 'si-btn danger'; btn.textContent = '移出';
+      btn.onclick = () => openKickModal(m);
+      row.appendChild(btn);
+    }
     box.appendChild(row);
   });
-  Store.ackOut(memberCode); // 已经画过一次了，下次再开面板这些人就不再出现
+  /* 日程已经清空的退出者：第二次打开面板只提这一句，第三次起连这句也没有了 */
+  if (notices.length) toast(notices.map((m) => m.name + ' ' + (m.outBy && m.outBy !== m.id ? '已被移出' : '已退出') + '，日程已清空').join('；'));
 }
 $('#memberClose').onclick = () => { $('#memberModal').hidden = true; };
 
 let leaveCode = null;
+let kickTarget = null;
+const LEAVE_TEXT_HTML = $('#leaveText').innerHTML;
 function myEventCount(code) {
   const data = Store.get(code);
   if (!data) return 0;
@@ -689,7 +708,11 @@ function openLeaveModal(code) {
   if (Store.role(code) === 'creator') return toast('创建者不能退出自己创建的空间：要清掉数据请用「☁ 清空」');
   if (!Store.get(code)) return toast('这个空间还没有可读的数据，直接用「移除」从本机删掉就行');
   leaveCode = code;
+  kickTarget = null;
   const data = Store.get(code);
+  $('#leaveTitle').textContent = '退出空间';
+  $('#leaveOk').textContent = '确认退出';
+  $('#leaveText').innerHTML = LEAVE_TEXT_HTML;
   $('#leaveSpaceName').textContent = data.name || code;
   const n = myEventCount(code);
   $('#leavePurgeWrap').classList.toggle('hidden', !n);
@@ -697,14 +720,43 @@ function openLeaveModal(code) {
   $('#leavePurgeText').textContent = `同时删除我在该空间创建的日程（${n} 条，其他成员也会同步看不到）`;
   $('#leaveModal').hidden = false;
 }
+/* 移出成员借用同一个弹层：只是把人换成 TA，勾选框换成「删不删 TA 的日程」 */
+function openKickModal(m) {
+  const data = Store.get(memberCode) || {};
+  kickTarget = { code: memberCode, id: m.id };
+  leaveCode = null;
+  $('#leaveTitle').textContent = '移出成员';
+  $('#leaveOk').textContent = '确认移出';
+  $('#leaveText').innerHTML = '把「<b>' + escapeHtml(m.name) + '</b>」移出「' + escapeHtml(data.name || memberCode)
+    + '」？TA 的本机下次同步会收到移出通知。网盘上没有服务器，对方再输一次邀请码仍然能回来。';
+  $('#leavePurgeWrap').classList.toggle('hidden', !m.events);
+  $('#leavePurge').checked = false;
+  $('#leavePurgeText').textContent = `同时删除 TA 在该空间创建的日程（${m.events} 条，其他成员也会同步看不到）`;
+  $('#memberModal').hidden = true;
+  $('#leaveModal').hidden = false;
+}
 $('#leaveCancel').onclick = () => { $('#leaveModal').hidden = true; };
 $('#leaveOk').onclick = async () => {
-  if (!leaveCode) return;
-  const code = leaveCode, btn = $('#leaveOk'); btn.disabled = true;
+  const btn = $('#leaveOk'); btn.disabled = true;
+  const drop = $('#leavePurge').checked;
   try {
+    if (kickTarget) {
+      const t = kickTarget;
+      if (!needDav(t.code)) return;
+      if (!Store.kickMember(t.code, t.id, { dropMine: drop })) return toast('TA 已经不是可移出的普通成员了');
+      await Store.syncCode(t.code);
+      kickTarget = null;
+      $('#leaveModal').hidden = true;
+      toast('已移出，稍后同步给其他成员');
+      memberCode = t.code; $('#memberModal').hidden = false;
+      renderMembers(); renderSpaceMgmt();
+      return;
+    }
+    if (!leaveCode) return;
+    const code = leaveCode;
     if (!needDav(code)) return;
     /* 先把「退出」写进云端成员表，成功后才清本机副本：反过来做就等于没退出过 */
-    if (!await Store.leave(code, { dropMine: $('#leavePurge').checked })) return;
+    if (!await Store.leave(code, { dropMine: drop })) return;
     Store.removeSpace(code);
     $('#leaveModal').hidden = true;
     toast('已退出该空间');
@@ -713,20 +765,26 @@ $('#leaveOk').onclick = async () => {
   finally { btn.disabled = false; }
 };
 
-/* 被管理员移出：和「空间被删除」一样问一声再动本机副本，绝不静默删 */
-Store.onKicked(async (code) => {
-  const data = Store.get(code); if (!data) return;
-  if (state.code === code) stopPolling();
+/* 被移出的人只看这一条通知：看完就退出该空间、把本机副本交出去，设置与首页的空间列表同时少一条。
+   网盘上别人那份数据一个字不动，想回来请对方重发邀请码——所以这里不问「要不要移除」，只告知 */
+async function notifyKickedOut(code) {
+  const data = Store.get(code);
+  if (!data) { Store.removeSpace(code); renderSpaceMgmt(); return; }
   const st = Store.status(code);
-  const ok = await uiConfirm('你已被移出空间',
-    `「${data.name || code}」的管理员把你移出了这个空间。要把它从本机一并移除吗？`
-    + (st.dirty ? '注意：本机还有没同步出去的改动，移除会一起丢掉。' : ''),
-    '移除本机副本');
-  if (!ok) { if (state.code === code) startPolling(); return; }
+  if (state.code === code) stopPolling();
+  await uiConfirm('您已被移出',
+    `「${data.name || code}」的管理员已经把您移出这个空间，现在退出该空间并清掉本机存的这份副本。`
+    + (st.dirty ? '注意：本机还有没同步出去的改动，会一起丢掉。' : '网盘上其他成员那份数据不受影响。')
+    + '如果是误操作，请让对方重新发一份邀请码给您。',
+    '知道了，退出空间', true);
   Store.removeSpace(code);
-  toast('已移除被退出的空间');
+  $('#switchModal').hidden = true;
+  toast('已退出该空间');
   if (state.code === code) { state.code = null; initStart(); } else renderSpaceMgmt();
-});
+}
+
+/* 同步时发现被移出：与「下次进入空间」是同一条路，复用上面那个告知 */
+Store.onKicked(notifyKickedOut);
 
 /* ---------- 清空云端空间数据 ---------- */
 let clearTarget=null;
@@ -759,6 +817,8 @@ $('#clearOk').onclick=async()=>{
 
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
+  /* 成员记录上已经写着「被别人移出」的人，先把这条通知看完，别把一个没位置的空间当成正常使用 */
+  if (Store.kickedOut(code)) { await notifyKickedOut(code); return; }
   state.code=code;
   if(state.defView!=='last'){ state.view=state.defView; localStorage.setItem(VIEW_KEY,state.view); } /* 设置里指定的默认视图 */
   localStorage.setItem('tm:lastSpace', code); // 下次冷启动直接回到这个空间

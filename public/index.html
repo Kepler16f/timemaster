@@ -19,7 +19,7 @@
       <div class="brand">
         <div class="brand-logo">📅</div>
         <h1>Reunion</h1>
-        <p>多人共享 · 坚果云同步，无需注册</p>
+        <p>多人共享 · 坚果云同步 · 无需注册</p>
       </div>
       <label>我的昵称
         <input type="text" id="myName" placeholder="例如 小明" />
@@ -153,7 +153,7 @@
         <div class="set-title">配置码</div>
         <button class="big-btn ghost" id="cfgImportBtn">📥 粘贴配置码导入并进入空间</button>
         <button class="big-btn ghost" id="cfgExportBtn">📤 生成配置码发给家人</button>
-        <p class="set-note">配置码 = 网盘地址 + 账号 + 应用密码 + 邀请码 打包。⚠️ 含凭据，只发给信任的人。</p>
+        <p class="set-note">配置码 = 网盘地址 + 账号 + 应用密码 + 邀请码 打包。⚠️ 含凭据，只发给信任的人。<br>用配置码进来的人会被视为<b>管理员</b>（与创建者同一网盘账号）：可以改空间名、移出普通成员。管理员资格由<b>创建者</b>授予和撤销，创建者撤销后只有他本人能再给回来。只想让 TA 看日程，请只发「邀请码」。</p>
       </div>
 
       <div class="set-group">
@@ -187,7 +187,7 @@
         </div>
         <div class="set-block">
           <div class="set-row">
-            <span>默认视图</span>
+            <span class="set-sub">默认视图</span>
             <label class="set-inline" for="dayViewSw"><span>日视图</span><input type="checkbox" id="dayViewSw"></label>
           </div>
           <div class="seg" id="defViewSeg">
@@ -288,11 +288,11 @@
     </div>
   </div>
 
-  <!-- ============ 退出空间 ============ -->
+  <!-- ============ 退出空间 / 移出成员（同一个弹层，两种语气） ============ -->
   <div class="modal-mask" id="leaveModal" hidden>
     <div class="modal">
-      <h3>退出空间</h3>
-      <p class="import-tip">退出后本机不再同步「<b id="leaveSpaceName"></b>」，本机存的这份云端日程数据会一并清掉；网盘上的空间文件和其他成员的日程不受影响。以后重新输入邀请码还能再进来。</p>
+      <h3 id="leaveTitle">退出空间</h3>
+      <p class="import-tip" id="leaveText">退出后本机不再同步「<b id="leaveSpaceName"></b>」，本机存的这份云端日程数据会一并清掉；网盘上的空间文件和其他成员的日程不受影响。以后重新输入邀请码还能再进来。</p>
       <label class="checkbox" id="leavePurgeWrap"><input type="checkbox" id="leavePurge" /><span id="leavePurgeText">同时删除我在该空间创建的日程</span></label>
       <div class="modal-actions">
         <button id="leaveCancel" class="action-btn">取消</button>
@@ -406,6 +406,7 @@
       </label>
       <p class="import-tip" id="cfgExportAcct"></p>
       <p class="import-tip warn">⚠️ 内含网盘应用密码，仅发给信任的人；泄露后可在坚果云重置应用密码。</p>
+      <p class="import-tip">对方粘了这个配置码就成了空间里的<b>管理员</b>（和你用同一个网盘账号），能改空间名、移出普通成员。你作为创建者随时可以撤销这份资格，撤销后只有你能再给回去。只想让 TA 看日程的话，请只发「邀请码」。</p>
       <div class="modal-actions">
         <button id="cfgExportClose" class="action-btn">关闭</button>
         <button id="cfgExportCopy" class="action-btn primary">复制</button>

@@ -276,6 +276,7 @@ store.attach('C1', local);
     eq('leave: 勾选后自己名下的日程打了墓碑', [!!dl.events.s1, !!dl.deletions.s1], [false, true]);
     eq('leave: 别人的日程一条不动', !!dl.events.f1, true);
     eq('leave: 已退出的人不再是管理员', store.isManager('S10'), false);
+    eq('leave: 自己主动退出的不算「被移出」（不该弹那条告知）', store.kickedOut('S10'), false);
     eq('leave: 创建者不能退出自己的空间', await (async () => {
       win.Auth = { memberKey: () => 'mom', session: () => null };
       return store.leave('S10', {});
@@ -292,13 +293,72 @@ store.attach('C1', local);
     eq('kick: 对方被标成被别人移出', [!!dk.members.friend.out, dk.members.friend.outBy], [true, 'sisDev']);
     eq('kick: 对方的日程保留（不脏数据）', !!dk.events.f1, true);
     eq('kick: 移出后不能再移出第二次', store.canKick('S10', 'friend'), false);
-    /* 这件事在别人眼里只该出现一次：名单画过一次，以后再开面板就别再占位置 */
-    eq('ack: 刚被移出的人第一次仍在名单里', store.members('S10').some((m) => m.id === 'friend'), true);
-    eq('ack: 画过一次即落已读', store.ackOut('S10'), 1);
-    eq('ack: 之后再开面板不再显示这个人', store.members('S10').some((m) => m.id === 'friend'), false);
-    eq('ack: 只是不显示，云端记录与他的日程都没动', [!!dk.members.friend, !!dk.events.f1], [true, true]);
-    dk.members.friend.out = Date.now() + 1000; // 他回来过又被移出一次（新的 out）→ 还要再提一次
-    eq('ack: 新的移出标记会重新出现', store.members('S10').some((m) => m.id === 'friend'), true);
+    /* 这件事在别人眼里该提几次，按「TA 的日程还在不在空间里」分两种。
+       日程还留着：一直正常显示，绝不弹提示（历史日程仍写着 TA 的名字，没什么好提醒的） */
+    eq('look: 日程还在→第一次照常画进名单', store.lookMembers('S10').rows.some((m) => m.id === 'friend'), true);
+    eq('look: 日程还在→第二次仍画、仍不弹提示',
+      (() => { const r = store.lookMembers('S10'); return [r.rows.some((m) => m.id === 'friend'), r.notices.length]; })(), [true, 0]);
+    eq('look: 只是显示的事，云端记录与 TA 的日程都没被动', [!!dk.members.friend, !!dk.events.f1], [true, true]);
+
+    /* 日程已清空：画一次 → 提一句 → 从此不再出现 */
+    dk.members.friend.out = 0; delete dk.members.friend.outBy; // 他重新加入过
+    eq('kick: 移出时可以连 TA 名下的日程一起清掉', store.kickMember('S10', 'friend', { dropMine: true }), true);
+    eq('kick: 勾选后 TA 的日程打了墓碑', [!!dk.events.f1, !!dk.deletions.f1], [false, true]);
+    const g1 = store.lookMembers('S10');
+    eq('look: 已清空的第一次仍画进名单', [g1.rows.some((m) => m.id === 'friend'), g1.notices.length], [true, 0]);
+    const g2 = store.lookMembers('S10');
+    eq('look: 第二次只弹一句「已被移出，日程已清空」',
+      [g2.rows.some((m) => m.id === 'friend'), g2.notices.map((m) => m.name)], [false, ['同学']]);
+    const g3 = store.lookMembers('S10');
+    eq('look: 第三次起既不画也不弹', [g3.rows.some((m) => m.id === 'friend'), g3.notices.length], [false, 0]);
+    eq('look: 不再提≠删记录，成员表里那条还在', !!dk.members.friend, true);
+    dk.members.friend.out = 0; delete dk.members.friend.outBy;
+
+    /* 管理员资格以创建者为准：给得了也收得回，收回来之后任何自动途径都不算数 */
+    win.Auth = { memberKey: () => 'mom', session: () => null };
+    eq('adm: 创建者可以指定普通成员当管理员', store.adminAction('S10', 'friend'), 'set');
+    eq('adm: 指定后角色变成管理员', (store.setAdmin('S10', 'friend', true), store.role('S10', 'friend')), 'admin');
+    eq('adm: 名单里能看出这是手动指定的', store.members('S10').find((m) => m.id === 'friend').adm, true);
+    eq('adm: 再点一次取消，退回普通成员', (store.setAdmin('S10', 'friend', false), store.role('S10', 'friend')), 'member');
+    eq('adm: 取消时把 adm 换成「创建者收走」这笔账',
+      [store.get('S10').members.friend.adm, !!store.get('S10').members.friend.admOff, store.get('S10').members.friend.admOffBy],
+      [undefined, true, 'mom']);
+    eq('adm: 同网盘账号的自动管理员，创建者也撤得动', store.adminAction('S10', 'sisDev'), 'unset');
+    eq('adm: 撤销后 davId 相同也不再算管理员', (store.setAdmin('S10', 'sisDev', false), store.role('S10', 'sisDev')), 'member');
+    eq('adm: 撤销后这位原管理员连移人都移不动了', (() => {
+      win.Auth = { memberKey: () => 'sisDev', session: () => null };
+      const r = store.canKick('S10', 'friend');
+      win.Auth = { memberKey: () => 'mom', session: () => null };
+      return r;
+    })(), false);
+    eq('adm: 创建者改不了自己的角色', store.canSetAdmin('S10', 'mom'), false);
+    eq('adm: 被移出的人不该被提名为管理员', (dk.members.friend.out = Date.now(), store.canSetAdmin('S10', 'friend')), false);
+    dk.members.friend.out = 0; delete dk.members.friend.outBy;
+    win.Auth = { memberKey: () => 'sisDev', session: () => null };
+    eq('adm: 管理员（非创建者）没有给收资格的权利', store.canSetAdmin('S10', 'friend'), false);
+    win.Auth = { memberKey: () => 'mom', session: () => null };
+    eq('adm: 只有创建者重新指定才恢复', (store.setAdmin('S10', 'sisDev', true), store.role('S10', 'sisDev')), 'admin');
+    eq('adm: 重新指定后撤销标记一并清掉', store.get('S10').members.sisDev.admOff, undefined);
+    eq('kick: 创建者能把管理员也移出去', store.canKick('S10', 'sisDev'), true);
+    eq('kick: 创建者动不了自己', store.canKick('S10', 'mom'), false);
+    win.Auth = { memberKey: () => 'sisDev', session: () => null };
+
+    /* 先用邀请码进来、事后才粘配置码：拿得到配置码就等于和创建者共用同一台网盘账号，
+       本机直接把自己认作管理员，不必等 davId 比对（换过设备就可能对不上） */
+    win.Auth = { memberKey: () => 'friend', session: () => null };
+    eq('claim: 被创建者撤销过的人，配置码也复活不了管理员', store.claimAdmin('S10'), false);
+    eq('claim: 撤销期间角色仍是普通成员', store.role('S10'), 'member');
+    delete store.get('S10').members.friend.admOff; delete store.get('S10').members.friend.admOffBy; // 创建者后来又重新给过
+    eq('claim: 没被撤销过的人，粘配置码=自我认作管理员', store.claimAdmin('S10'), true);
+    eq('claim: 认完之后角色生效', store.role('S10'), 'admin');
+    eq('claim: 走的是手动指定那条路，没去改 davId', [store.get('S10').members.friend.adm > 0, store.get('S10').members.friend.davId], [true, 'aOther']);
+    eq('claim: 已经是管理员的人不必再提名一次', store.claimAdmin('S10'), false);
+    eq('claim: 创建者不必自我提名', (() => {
+      win.Auth = { memberKey: () => 'mom', session: () => null };
+      const r = store.claimAdmin('S10');
+      win.Auth = { memberKey: () => 'sisDev', session: () => null };
+      return r;
+    })(), false);
     eq('kick: 非管理员谁也别想移', (() => {
       win.Auth = { memberKey: () => 'friend', session: () => null };
       const r = store.canKick('S10', 'sisDev');

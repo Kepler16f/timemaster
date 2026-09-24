@@ -13,6 +13,7 @@ harmony-shell/.hvigor/
 harmony-shell/.idea/
 *.tsbuildinfo
 .ci-dl/
+RELEASE_NOTES.md
 # 签名材料与本机产物绝不入库（私钥/口令只在本地）
 *.p12
 *.jks

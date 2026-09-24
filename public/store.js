@@ -389,7 +389,12 @@
     const c = creatorId(d);
     if (c && me === c) return 'creator';
     const mine = d.members[me];
-    if (!mine || !c || !mine.davId) return 'member';
+    if (!mine) return 'member';
+    if (mine.adm) return 'admin'; // 创建者手动指定的管理员（这人只有自己那台网盘账号时认不出同账号）
+    /* 创建者撤销过的人只能由创建者再给回来：同网盘账号这条自动路一律不再认。
+       否则「取消管理员」在这台设备上点完，对方下次同步又自己变回管理员，等于没取消 */
+    if (mine.admOff && mine.admOffBy === c) return 'member';
+    if (!c || !mine.davId) return 'member';
     const cm = d.members[c] || {};
     return cm.davId && cm.davId === mine.davId ? 'admin' : 'member';
   }
@@ -404,11 +409,19 @@
     m.out = Date.now(); m.outBy = by; m.updatedAt = Date.now(); m.by = by;
     return true;
   }
-  /* 被移出的人在别人的名单里只该出现一次：第一次看到（面板画出来过）就落一笔已读，
-     以后再开面板直接不见。已读记的是「这个键 + 这次的 out 时间戳」，所以同一人日后
-     再被移出一次（新的 out）还会再显示一次。云端那条成员记录照旧留着不动。 */
+  /* 谁退出了、谁被移出了，在别人眼里该提几次？规则按「TA 的日程还在不在」分两种：
+     - 日程已清空：第一次画一行「已退出/已被移出」，第二次只弹一句提示（连人带行一起消失），第三次起彻底安静
+     - 日程还留着：一直正常显示（日历上那些色块总得说清是谁写的），但绝不弹提示——以后 TA 那边再怎么动，
+       都不该再打扰这个空间里的其他人
+     已读次数记在本机（键 = 空间|成员），云端那条成员记录照旧留着不动。 */
   function outSeen() { try { return JSON.parse(localStorage.getItem('tm:outSeen') || '{}'); } catch (e) { return {}; } }
-  function seenOut(code, id, ts) { return outSeen()[code + '|' + id] === ts; }
+  function bumpOutSeen(code, ids) {
+    if (!ids.length) return;
+    const seen = outSeen();
+    ids.forEach((id) => { const k = code + '|' + id; seen[k] = (seen[k] || 0) + 1; });
+    localStorage.setItem('tm:outSeen', JSON.stringify(seen));
+  }
+  function seenTimes(code, id) { return outSeen()[code + '|' + id] || 0; }
 
   function renameSpace(code, name) {
     const d = loadLocal(code).data;
@@ -681,46 +694,85 @@
       const d = loadLocal(code).data;
       if (!d) return [];
       const cr = creatorId(d);
-      return Object.keys(d.members).filter((id) => {
-        const m = d.members[id];
-        return !m.out || !seenOut(code, id, m.out); // 已看过一次的退出/被移出者不再出现在名单里
-      }).map((id) => {
+      return Object.keys(d.members).map((id) => {
         const m = d.members[id];
         let n = 0;
         Object.keys(d.events).forEach((e) => { if (resolveId(d, d.events[e].ownerId) === id) n++; });
         return {
           id, name: m.name || '未命名', color: m.color || '', role: id === cr ? 'creator' : roleOf(d, id),
           davId: m.davId || '', out: m.out || 0, outBy: m.outBy || '', mine: isMine(id, d), events: n, joinedAt: m.joinedAt || 0,
+          adm: !!m.adm, // 手动指定的管理员（区别于同网盘账号自动认定的那位）
+          gone: !!(m.out && !n), // 已退出/被移出且名下再无日程：这种人才会淡出名单
+          seen: m.out ? seenTimes(code, id) : 0, // 这个面板已经为 TA 打开过几次
         };
       }).sort((a, b) => (a.out - b.out) || (a.role === 'creator' ? -1 : b.role === 'creator' ? 1 : (a.role === 'admin' ? -1 : b.role === 'admin' ? 1 : a.joinedAt - b.joinedAt)));
     },
-    /* 名单画出来一次就算看过了：之后这些退出/被移出的人不再占位置 */
-    ackOut(code) {
-      const d = loadLocal(code).data;
-      if (!d) return 0;
-      const seen = outSeen();
-      let n = 0;
-      Object.keys(d.members).forEach((id) => {
-        const m = d.members[id];
-        if (!m.out) return;
-        const k = code + '|' + id;
-        if (seen[k] !== m.out) { seen[k] = m.out; n++; }
+    /* 打开成员面板时调一次：要画的人 + 这一次该弹的提示，顺手把「见过几次」推进一格。
+       日程还在的退出者永远在名单里且不弹提示；日程已清空的：第一次画行，第二次只弹提示，第三次起不再出现。 */
+    lookMembers(code) {
+      const all = api.members(code);
+      const rows = [], notices = [], bump = [];
+      all.forEach((m) => {
+        if (!m.out) return rows.push(m);
+        if (!m.gone) return rows.push(m); // 日程还在，正常显示，不打扰
+        if (m.seen === 0) { rows.push(m); bump.push(m.id); }
+        else if (m.seen === 1) { notices.push(m); bump.push(m.id); }
       });
-      if (n) localStorage.setItem('tm:outSeen', JSON.stringify(seen));
-      return n;
+      bumpOutSeen(code, bump);
+      return { rows, notices };
     },
     /* 管理员能移出的只有「普通成员」：创建者动不得，同为管理员的也动不得（同一网盘账号本来就是一家人） */
+    /* 谁能移出谁：创建者说了算——管理员和普通成员他都能移出去（自己除外）；
+       管理员只能动普通成员，动不了创建者，也动不了另一位管理员（同一网盘账号本来就是一家人） */
     canKick(code, id) {
       const d = loadLocal(code).data;
       if (!d) return false;
       const t = resolveId(d, id);
-      return isManager(d, myId()) && roleOf(d, t) === 'member' && !outAt(d, t) && t !== myId();
+      if (t === resolveId(d, myId())) return false;
+      const mine = roleOf(d, myId()), target = roleOf(d, t);
+      if (outAt(d, t) || target === 'creator') return false;
+      return mine === 'creator' ? true : mine === 'admin' && target === 'member';
     },
-    kickMember(code, id) {
+    kickMember(code, id, opts) {
       if (!api.canKick(code, id)) return false;
       const d = loadLocal(code).data;
       const t = resolveId(d, id);
-      mutate(code, (dd) => { markOut(dd, t, resolveId(dd, myId())); });
+      mutate(code, (dd) => {
+        const tgt = resolveId(dd, t);
+        markOut(dd, tgt, resolveId(dd, myId()));
+        if (opts && opts.dropMine) {
+          Object.keys(dd.events).forEach((eid) => {
+            const e = dd.events[eid];
+            if (resolveId(dd, e.ownerId) !== tgt) return;
+            dd.deletions[eid] = Math.max(Date.now(), (e.updatedAt || 0) + 1);
+            delete dd.events[eid];
+          });
+        }
+      });
+      return true;
+    },
+    /* 管理员资格只由创建者给、也只由创建者收：'set' / 'unset' / ''。
+       靠 davId 自动认定的那位一样能被创建者撤销——撤销后写 admOff + admOffBy，
+       roleOf 见此标记就不再走 davId 那条自动路，除非创建者重新指定 */
+    adminAction(code, id) {
+      const d = loadLocal(code).data;
+      if (!d || roleOf(d, myId()) !== 'creator') return '';
+      const t = resolveId(d, id), m = d.members[t];
+      if (!m || outAt(d, t) || t === creatorId(d) || t === resolveId(d, myId())) return '';
+      return isManager(d, t) ? 'unset' : 'set';
+    },
+    canSetAdmin(code, id) { return api.adminAction(code, id) !== ''; },
+    setAdmin(code, id, on) {
+      if (api.adminAction(code, id) !== (on ? 'set' : 'unset')) return false;
+      mutate(code, (d) => {
+        const t = resolveId(d, id), m = d.members[t];
+        if (on) { m.adm = Date.now(); delete m.admOff; delete m.admOffBy; }
+        else {
+          delete m.adm;
+          m.admOff = Date.now(); m.admOffBy = resolveId(d, myId());
+        }
+        m.updatedAt = Date.now();
+      });
       return true;
     },
     /* 退出空间：在云端成员表里把自己标记为已退出（可选把自己名下的日程一起打墓碑），
@@ -745,6 +797,25 @@
       await syncCode(code);
       if (c.dirty) throw new Error('网盘没连上，云端还不知道你退出了——请联网后重试');
       return true;
+    },
+    /* 拿着配置码进来的人＝和创建者共用同一台网盘账号：自己给自己记一笔管理员。
+       不等 davId 比对（换设备、清过数据时本机算出的哈希可能对不上），也不额外弹层问人。
+       创建者收走过的资格，配置码给不回来——管理员这件事最终以创建者为准 */
+    claimAdmin(code) {
+      const d = loadLocal(code).data;
+      if (!d) return false;
+      const me = resolveId(d, myId()), m = d.members[me];
+      if (!m || roleOf(d, me) === 'creator' || m.adm) return false;
+      if (m.admOff) return false;
+      mutate(code, (dd) => { const t = resolveId(dd, me); if (dd.members[t]) dd.members[t].adm = Date.now(); });
+      return true;
+    },
+    /* 别人（创建者）把我移出过没有：out 是别人标的算被移出，自己标的算自己退出，两回事 */
+    kickedOut(code) {
+      const d = loadLocal(code).data;
+      if (!d) return false;
+      const me = resolveId(d, myId()), m = d.members[me];
+      return !!(m && m.out && m.outBy && m.outBy !== me);
     },
     onKicked: (fn) => kickedListeners.push(fn),
   };

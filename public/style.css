@@ -371,7 +371,9 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 .set-title { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; }
 /* 组内的小标题 + 它自己的控件（如「深色模式」+ 三档切换）要贴在一起：外层 .set-group 的 gap 是 16px */
 .set-block { display: flex; flex-direction: column; gap: 10px; }
-.set-sub { font-size: 13px; font-weight: 600; color: var(--sub); }
+/* 组内小标题长得很像组标题就得真的一样：字号/字重/颜色/字距全部对齐 .set-title，
+   否则「深色模式」「默认视图」看着像另一套字体 */
+.set-sub { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; }
 .set-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; color: var(--text-weak); }
 /* flex-direction 要显式写：全局 `label{flex-direction:column}` 会让「文字 + 勾选框」的 .set-row 竖排 */
 .set-row { display: flex; flex-direction: row; justify-content: space-between; align-items: center; font-size: 15px; }
