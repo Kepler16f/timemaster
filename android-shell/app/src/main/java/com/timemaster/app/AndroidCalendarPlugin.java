@@ -212,7 +212,7 @@ public class AndroidCalendarPlugin extends Plugin {
     /** 把改动写回这条日程原来所在的日历：只 update，绝不删除别人的日程 */
     @PluginMethod
     public void edit(PluginCall call) {
-        JSONObject ev = new JSONObject(call.getData());
+        JSONObject ev = call.getData(); // JSObject 本身就是 org.json.JSONObject
         long sysId, calId;
         try {
             sysId = Long.parseLong(ev.optString("evId"));
