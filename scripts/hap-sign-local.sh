@@ -53,7 +53,7 @@ prune_old_builds() {
   keepre="|$(echo "$vers" | paste -sd'|' -)|"
   for f in "$ART_DIR"/reunion-v*.hap "$ART_DIR"/reunion-v*.apk; do
     [ -e "$f" ] || continue
-    v=$(basename "$f" | sed -n 's/^reunion-v\([0-9][0-9.]*\).*/\1/p')
+    v=$(basename "$f" | sed -n 's/^reunion-v\([0-9][0-9.]*\)[.-].*/\1/p')
     case "$keepre" in *"|$v|"*) continue ;; esac
     rm -f -- "$f" && echo "清理旧构建：$f"
   done
