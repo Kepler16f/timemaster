@@ -20,14 +20,26 @@
     return 0;
   }
 
+  /* 状态码要分开说：404 多半是仓库/发布被设成私有，403 是不登录被限流（匿名 60 次/小时），
+     这三种在手机上表现一模一样，用户只看到「检查失败」，说清楚才知道下一步该干什么 */
+  function apiError(status, res) {
+    if (status === 404) return '检查更新失败：GitHub 上找不到这个发布（HTTP 404）。仓库或 Release 被设成私有时就会出现，把仓库设为公开即可';
+    if (status === 403 || status === 429) {
+      const back = res && res.headers && res.headers.get && res.headers.get('x-ratelimit-reset');
+      const mins = back ? Math.max(1, Math.round((Number(back) * 1000 - Date.now()) / 60000)) : 0;
+      return '检查更新太频繁，GitHub 暂时限流了' + (mins ? '，大约 ' + mins + ' 分钟后再试' : '') + '（HTTP ' + status + '）';
+    }
+    return '检查更新失败 HTTP ' + status;
+  }
+
   async function getJson(url) {
     if (window.Transport && (Transport.isNative || Transport.hasHarmony)) {
       const r = await Transport.request({ method: 'GET', url, headers: { Accept: 'application/vnd.github+json' } });
-      if (r.status !== 200) throw new Error('检查更新失败 HTTP ' + r.status);
+      if (r.status !== 200) throw new Error(apiError(r.status));
       return JSON.parse(r.text);
     }
     const r = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
-    if (!r.ok) throw new Error('检查更新失败 HTTP ' + r.status);
+    if (!r.ok) throw new Error(apiError(r.status, r));
     return r.json();
   }
 
