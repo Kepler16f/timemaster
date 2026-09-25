@@ -195,6 +195,11 @@ function showScreen(name){
   $('#tabbar').classList.toggle('hidden', name==='startScreen');
   $('#tabRoom').classList.toggle('active', name==='calendarScreen');
   $('#tabSettings').classList.toggle('active', name==='settingsScreen');
+  /* 桌面端左侧栏：开屏页不收栏，日历/设置按钮跟随高亮；空间列表随时重画（成本只是本地数据） */
+  document.body.classList.toggle('on-start', name==='startScreen');
+  $('#railCalendar').classList.toggle('active', name==='calendarScreen');
+  $('#railSettings').classList.toggle('active', name==='settingsScreen');
+  renderRail();
 }
 $('#tabRoom').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
 $('#tabSettings').onclick=openSettings;
@@ -1496,7 +1501,7 @@ $('#updDlBtn').onclick=async()=>{
   if(!updInfo || !updInfo.url) return toast('没有可用的安装包');
   btn.disabled=true; st.textContent='后台下载 0%';
   try{
-    const path = await Update.download(updInfo.url, (p)=>{
+    const path = await Update.download(updInfo, (p)=>{
       const pct = p && p.percent != null ? p.percent : (p && p.total ? Math.floor(p.received/p.total*100) : 0);
       st.textContent = `下载中 ${pct}%（可退出此页，不影响）`;
     });
