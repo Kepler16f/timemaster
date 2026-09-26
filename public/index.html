@@ -205,6 +205,10 @@
         <div class="set-row"><span>版本</span><span class="set-val" id="appVersion">v0.3.0</span></div>
         <div id="updGroup" hidden style="display:flex;flex-direction:column;gap:14px">
           <div class="set-row"><span>更新</span><span class="set-val" id="updState">点下方按钮检查新版本</span></div>
+          <div class="set-row hidden" id="autoUpdRow">
+            <span>启动时自动检查更新</span>
+            <label class="set-inline" for="autoUpdSw"><span>开</span><input type="checkbox" id="autoUpdSw"></label>
+          </div>
           <div class="set-actions">
             <button class="big-btn ghost" id="updCheckBtn">🔄 检查更新</button>
             <button class="big-btn hidden" id="updDlBtn">⬇ 后台下载新版</button>
@@ -365,6 +369,19 @@
       <div class="modal-actions">
         <button id="confirmNo" class="action-btn">取消</button>
         <button id="confirmYes" class="action-btn primary danger-solid">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 桌面端更新弹层：发现新版 → 下载进度 → 已就绪可装 ============ -->
+  <div class="modal-mask" id="updModal" hidden>
+    <div class="modal confirm-sheet">
+      <h3 id="updModalTitle">发现新版本</h3>
+      <p id="updModalText" class="confirm-text upd-modal-text"></p>
+      <div class="upd-bar" id="updModalBarWrap" hidden><i id="updModalBar"></i></div>
+      <div class="modal-actions">
+        <button id="updModalCancel" class="action-btn">稍后再说</button>
+        <button id="updModalMain" class="action-btn primary">⬇ 立即下载</button>
       </div>
     </div>
   </div>

@@ -427,6 +427,10 @@ input[type=checkbox]:checked::after { content: ''; position: absolute; box-sizin
 .detail-meta { display: flex; flex-direction: column; gap: 7px; }
 .dm-row { font-size: 14px; color: var(--sub); }
 .confirm-text { font-size: 14px; color: var(--sub2); line-height: 1.65; }
+/* 桌面更新弹层：正文里带换行（版本号 + 更新说明），进度条给下载一个看得见的反馈 */
+.upd-modal-text { white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow-y: auto; }
+.upd-bar { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--text-weak) 22%, transparent); overflow: hidden; margin: 4px 0 2px; }
+.upd-bar > i { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--accent); transition: width .3s ease; }
 .action-btn.danger { color: #e5484d; border-color: color-mix(in srgb, #e5484d 45%, transparent); }
 .action-btn.danger-solid { background: linear-gradient(135deg, #f0564e, #d92d20); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(217,45,32,.32); font-weight: 600; }
 .action-btn.hidden { display: none; }

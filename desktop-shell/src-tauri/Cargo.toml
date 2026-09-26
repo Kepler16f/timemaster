@@ -15,6 +15,8 @@ serde = { version = "1", features = ["derive"] }
 # rustls（默认）不依赖系统 OpenSSL：deb/AppImage 里不用捆绑 libssl，跨发行版稳
 ureq = { version = "2.10", features = ["gzip"] }
 uuid = { version = "1", features = ["v4"] }
+# 下载的安装包按 GitHub 给的 sha256 校一遍再交给安装器（反代可能截断/换包）
+sha2 = "0.10"
 
 [profile.release]
 codegen-units = 1

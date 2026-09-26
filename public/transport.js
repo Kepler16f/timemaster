@@ -97,8 +97,38 @@
     window.open(url, '_blank');
   }
 
+  /* ===== 桌面端应用内更新：原生下载 → 轮询进度 → 拉起安装器 =====
+     进度用轮询而不是 Tauri 事件：事件要 core:event 权限，而 Rust 侧只能在 CI 里编译，
+     少配一条权限就是「静默收不到进度」，轮询不会踩这个坑。 */
+  async function downloadUpdate(req) {
+    if (!tauriInvoke) throw new Error('当前环境不支持壳内下载');
+    await tauriInvoke('download_update', {
+      req: {
+        urls: (req.urls || []).filter(Boolean),
+        name: String(req.name || 'reunion-update'),
+        sha256: String(req.sha256 || ''),
+      },
+    });
+  }
+  async function updateProgress() {
+    if (!tauriInvoke) return null;
+    const p = await tauriInvoke('download_progress');
+    return {
+      status: p.status, percent: p.percent | 0, received: p.received, total: p.total,
+      path: p.path || '', used: p.used || '', error: p.error || '',
+    };
+  }
+  async function cancelUpdateDownload() {
+    if (tauriInvoke) await tauriInvoke('cancel_download');
+  }
+  async function installUpdate(path) {
+    if (!tauriInvoke) throw new Error('当前环境不支持壳内安装');
+    return (await tauriInvoke('install_update', { path: String(path) })) || '';
+  }
+
   window.Transport = {
     request, basicAuth, harmonyCall, deviceId, openExternal,
+    downloadUpdate, updateProgress, cancelUpdateDownload, installUpdate,
     get isNative() { return !!(cap || harmony() || tauriInvoke); },
     get isDesktop() { return !!tauriInvoke; },
     get hasHarmony() { return !!harmony(); },

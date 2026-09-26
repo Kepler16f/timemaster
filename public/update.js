@@ -78,7 +78,11 @@
     const hit = isDesktop ? desktopAsset(list)
       : (list.find((a) => want.test(a.name || '')) || list.find((a) => want.test(a.browser_download_url || '')));
     const url = hit ? hit.browser_download_url : (list[0] ? list[0].browser_download_url : null);
-    return url ? { url, sha256: hit && /^sha256:/i.test(hit.digest || '') ? hit.digest.slice(7) : '' } : null;
+    return url ? {
+      url,
+      name: (hit && hit.name) || String(url).split('?')[0].split('/').pop() || 'reunion-update',
+      sha256: hit && /^sha256:/i.test(hit.digest || '') ? hit.digest.slice(7) : '',
+    } : null;
   }
 
   function ready() { try { return JSON.parse(localStorage.getItem(READY_KEY)) || null; } catch (e) { return null; } }
@@ -95,6 +99,7 @@
       hasUpdate: !!latest && cmp(latest, cur) > 0,
       notes: j.body || '',
       url: asset ? asset.url : null,
+      name: asset ? asset.name : '',
       sha256: asset ? asset.sha256 : '',
       urls: asset ? dlUrls(asset.url) : [],
       page: j.html_url || '',
@@ -107,13 +112,28 @@
      一组候选地址交给原生逐个试（反代只转发 github.com/**，api.github.com 它不代理，
      所以「检查」这一步没有替代通道，只有下载能量级受益），校验不过就换下一个 */
   let progCb = null, progBound = false;
-  async function download(info, onProgress) {
-    const p = capUpdate();
-    if (!p) {
-      if (window.Transport && Transport.isDesktop) throw new Error('桌面端暂不支持壳内自动安装，请到发布页下载');
-      throw new Error(isHarmony() ? '鸿蒙暂不支持自装 HAP，请到发布页手动签名安装' : '请在 App 内使用更新功能');
+
+  /* 桌面端：进度靠轮询（见 transport.js 的注释），取消只置原生标志，
+     让下载线程在下一个分块边界自己收尾 */
+  async function desktopDownload(urls, info, onProgress) {
+    await Transport.downloadUpdate({
+      urls, name: (info && info.name) || 'reunion-update', sha256: (info && info.sha256) || '',
+    });
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 400));
+      const p = await Transport.updateProgress();
+      if (!p) throw new Error('读不到下载状态');
+      if (onProgress) onProgress(p);
+      if (p.status === 'done') { if (p.used) rememberChannel(p.used); return p.path; }
+      if (p.status === 'error') throw new Error(p.error || '下载失败');
     }
+  }
+
+  async function download(info, onProgress) {
     const urls = (info && info.urls && info.urls.length) ? info.urls : [info && info.url];
+    if (window.Transport && Transport.isDesktop) return desktopDownload(urls, info, onProgress);
+    const p = capUpdate();
+    if (!p) throw new Error(isHarmony() ? '鸿蒙暂不支持自装 HAP，请到发布页手动签名安装' : '请在 App 内使用更新功能');
     progCb = onProgress || null;
     if (!progBound && p.addListener) {
       progBound = true; // 只绑一次，避免每下一次就多一个监听、进度被重复回调
@@ -124,11 +144,28 @@
     return (r && r.path) || '';
   }
 
+  async function cancelDownload() {
+    if (window.Transport && Transport.isDesktop) { await Transport.cancelUpdateDownload(); return; }
+    throw new Error('当前平台不支持取消下载');
+  }
+
+  /* 返回一段给用户看的说明：安卓静默交给系统安装器（空串），
+     Windows 说「即将退出」，Linux 只能把 apt 命令念给人自己执行 */
   async function install(path) {
+    if (window.Transport && Transport.isDesktop) return Transport.installUpdate(path);
     const p = capUpdate();
     if (!p) throw new Error('当前平台不支持自动安装');
     await p.install({ path });
+    return '';
   }
 
-  window.Update = { check, download, install, cmp, ready, markReady, clearReady, get canAutoInstall() { return !!capUpdate(); } };
+  const isDesktopShell = () => !!(window.Transport && Transport.isDesktop);
+  /* 只有 Windows 能从应用里直接把 NSIS 安装器拉起来；Linux 的 deb 要 root，只能教用户敲命令 */
+  const isWinShell = () => /Windows/i.test(navigator.userAgent);
+
+  window.Update = {
+    check, download, install, cancelDownload, cmp, ready, markReady, clearReady,
+    get canAutoInstall() { return !!capUpdate() || (isDesktopShell() && isWinShell()); },
+    get canDownload() { return !!capUpdate() || isDesktopShell(); },
+  };
 })();

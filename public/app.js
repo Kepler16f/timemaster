@@ -1503,27 +1503,105 @@ $('#importSave').onclick=async()=>{
   $('#importModal').hidden=true; toast(`导入 ${parsed.length} 条（循环日程存规则，不炸开）`);
 };
 
-/* ---------- 应用内更新（仅安卓壳；鸿蒙 HAP 不能自装，整组隐藏） ---------- */
+/* ---------- 应用内更新：安卓/鸿蒙走原生插件，桌面端走 Tauri 下载 + 应用内弹层 ---------- */
 let updInfo = null;
+let updBusy = false;
 const isDesktopShell = () => !!(window.Transport && Transport.isDesktop);
+const AUTOUPD_KEY = 'tm:autoUpd';
+const autoUpdOn = () => localStorage.getItem(AUTOUPD_KEY) !== '0'; // 默认开：不主动关的人就是想要它
+function syncAutoUpd(){
+  const row=$('#autoUpdRow'), sw=$('#autoUpdSw');
+  if(!row||!sw) return;
+  row.classList.toggle('hidden', !isDesktopShell());
+  sw.checked = autoUpdOn();
+}
+$('#autoUpdSw').onchange=(e)=>{ localStorage.setItem(AUTOUPD_KEY, e.target.checked?'1':'0'); };
+
+/* 弹层四态：ask 有新版 / dl 下载中 / done 包已就绪 / err 下载失败。
+   下载跑在原生线程，所以「后台继续」只是收窗，进度照走 */
+const UM = { mode:'', pct:0, text:'', title:'' };
+const UM_TITLE = { ask:'发现新版本', dl:'正在下载更新', done:'更新包已就绪', err:'更新没有完成' };
+const UM_BTN = { ask:['⬇ 立即下载新版','稍后再说'], dl:['✖ 取消下载','后台继续'], done:['📲 立即安装','稍后再说'], err:['🔄 重试下载','关闭'] };
+function renderUpdModal(){
+  if($('#updModal').hidden) return;
+  $('#updModalTitle').textContent = UM.title || UM_TITLE[UM.mode] || '更新';
+  const txt=$('#updModalText'); txt.textContent = UM.text; txt.hidden = !UM.text;
+  $('#updModalBarWrap').hidden = UM.mode!=='dl';
+  $('#updModalBar').style.width = UM.pct+'%';
+  $('#updModalMain').textContent = UM_BTN[UM.mode][0];
+  $('#updModalCancel').textContent = UM_BTN[UM.mode][1];
+}
+function showUpdModal(mode, text, title){
+  UM.mode=mode; UM.text=text||''; UM.title=title||'';
+  if(mode!=='dl') UM.pct = mode==='done' ? 100 : 0;
+  $('#updModal').hidden=false; renderUpdModal();
+}
+function fmtMB(b){ return (Math.max(0,b)/1048576).toFixed(1)+' MB'; }
+function onUpdProgress(p){
+  const pct = p && p.percent!=null ? p.percent : (p && p.total ? Math.floor(p.received/p.total*100) : 0);
+  UM.pct=pct;
+  const line=`下载中 ${pct}%`+(p&&p.total?`（${fmtMB(p.received)} / ${fmtMB(p.total)}）`:'' );
+  if(UM.mode==='dl'){ UM.text=line; renderUpdModal(); }
+  $('#updState').textContent=line+'（可离开此页，不影响）';
+}
+async function startUpdateDownload(){
+  if(!updInfo || !updInfo.url) return toast('没有可用的安装包');
+  if(updBusy) return;
+  updBusy=true; showUpdModal('dl','正在连接下载源…'); renderUpdate();
+  try{
+    const path = await Update.download(updInfo, onUpdProgress);
+    Update.markReady(updInfo.latest, path);
+    updBusy=false;
+    showUpdModal('done', `v${updInfo.latest} 已下载完成（sha256 校验通过）。\n点「立即安装」即可覆盖升级。`);
+  }catch(e){
+    updBusy=false;
+    const msg=(e && e.message) || '下载失败';
+    if(/取消/.test(msg)){
+      $('#updModal').hidden=true;
+      $('#updState').textContent='已取消下载，可点「后台下载新版」重来';
+      toast('已取消下载');
+    }else{
+      $('#updState').textContent='下载失败：'+msg;
+      showUpdModal('err', msg+'\n换下载源再试一次，或到发布页手动下载。');
+    }
+  }finally{ renderUpdate(); }
+}
+async function runUpdateInstall(){
+  const rdy = Update.ready();
+  if(!rdy) return toast('还没有下载好的安装包');
+  try{
+    const note = await Update.install(rdy.path);
+    if(note){ showUpdModal('done', note); toast('已打开安装包所在目录'); } // Linux：deb 要 root，只能把命令念给人
+  }catch(e){ Update.clearReady(); toast(e.message); renderUpdate(); showUpdModal('ask','安装包已经不可用了，重新下载一份。'); }
+}
+$('#updModalMain').onclick=()=>{
+  if(UM.mode==='dl'){ Update.cancelDownload().catch(()=>{}); $('#updState').textContent='正在取消…'; return; }
+  if(UM.mode==='done') return runUpdateInstall();
+  startUpdateDownload();
+};
+$('#updModalCancel').onclick=()=>{ $('#updModal').hidden=true; };
+
 function renderUpdate(){
-  /* 桌面端没有壳内自动安装（暂缓和安卓 NativeUpdate 同级的实现），但「检查更新 + 去发布页」照常给 */
-  const grp=$('#updGroup'); if(grp) grp.hidden = !Update.canAutoInstall && !isDesktopShell();
+  const grp=$('#updGroup'); if(grp) grp.hidden = !Update.canDownload && !isDesktopShell();
   const dl=$('#updDlBtn'), ins=$('#updInstallBtn'), page=$('#updPageBtn'), note=$('#updNote');
-  /* 这两个按钮是用 .hidden 类藏起来的，切换必须走 classList——
+  /* 这些按钮是用 .hidden 类藏起来的，切换必须走 classList——
      只改 el.hidden 属性的话类名还留在身上，按钮永远出不来（下载/安装入口就是这么丢的） */
   let rdy = Update.ready();
   if(rdy && (!updInfo || rdy.ver !== updInfo.latest)){ Update.clearReady(); rdy = null; } // 旧版残留的包不算就绪
-  dl.classList.toggle('hidden', !(Update.canAutoInstall && updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy);
-  ins.classList.toggle('hidden', !(rdy && Update.canAutoInstall));
+  const canDl = Update.canDownload && updInfo && updInfo.hasUpdate && updInfo.url;
+  dl.classList.toggle('hidden', !canDl || !!rdy || updBusy);
+  ins.classList.toggle('hidden', !rdy);
+  if(ins) ins.textContent = (isDesktopShell() && !Update.canAutoInstall) ? '📂 打开安装包目录' : '📲 立即安装';
   if(page) page.classList.toggle('hidden', !(isDesktopShell() && updInfo && updInfo.hasUpdate));
   note.hidden = !updInfo;
   if(updInfo){
     const lines=[];
-    if(rdy) lines.push(`v${rdy.ver} 安装包已下载完成，点「立即安装」即可覆盖升级`);
+    if(rdy) lines.push(isDesktopShell() && !Update.canAutoInstall
+      ? `v${rdy.ver} 安装包已下载：${rdy.path}`
+      : `v${rdy.ver} 安装包已下载完成，点「立即安装」即可覆盖升级`);
     else if(updInfo.hasUpdate) lines.push(`新版本 v${updInfo.latest}：${(updInfo.notes||'').replace(/\s+/g,' ').slice(0,120)}`);
     else lines.push(`已是最新版本 v${updInfo.latest}`);
-    if(!Update.canAutoInstall) lines.push('本平台不能自动安装，请到发布页下载：'+(updInfo.page||''));
+    if(!Update.canDownload) lines.push('本平台不能自动安装，请到发布页下载：'+(updInfo.page||''));
     note.textContent=lines.join('\n');
   }
 }
@@ -1532,11 +1610,15 @@ $('#updCheckBtn').onclick=async()=>{
   try{
     updInfo = await Update.check(APP_VERSION);
     st.textContent = updInfo.hasUpdate ? `发现新版 v${updInfo.latest}` : `已是最新 v${APP_VERSION}`;
-    if(updInfo.hasUpdate && !Update.canAutoInstall) st.textContent += '（需手动安装）';
+    if(updInfo.hasUpdate && !Update.canDownload) st.textContent += '（需手动安装）';
     renderUpdate();
+    if(isDesktopShell() && updInfo.hasUpdate) showUpdModal(Update.ready()?'done':'ask',
+      Update.ready() ? `v${updInfo.latest} 安装包已就绪，点「立即安装」即可覆盖升级。`
+        : `当前 v${APP_VERSION} → 最新 v${updInfo.latest}\n${(updInfo.notes||'').replace(/\s+/g,' ').slice(0,160)}`);
   }catch(e){ st.textContent='检查失败'; toast(e.message); }
 };
 $('#updDlBtn').onclick=async()=>{
+  if(isDesktopShell()) return startUpdateDownload();
   const st=$('#updState'), btn=$('#updDlBtn');
   if(!updInfo || !updInfo.url) return toast('没有可用的安装包');
   btn.disabled=true; st.textContent='后台下载 0%';
@@ -1551,16 +1633,30 @@ $('#updDlBtn').onclick=async()=>{
   }catch(e){ st.textContent='下载失败：'+e.message; }
   finally{ btn.disabled=false; renderUpdate(); }
 };
-$('#updInstallBtn').onclick=async()=>{
-  const rdy = Update.ready();
-  if(!rdy) return toast('还没有下载好的安装包');
-  try{ await Update.install(rdy.path); toast('已交给系统安装'); }
-  catch(e){ toast(e.message); }
-};
+$('#updInstallBtn').onclick=()=> isDesktopShell() ? runUpdateInstall()
+  : (async()=>{ const rdy=Update.ready(); if(!rdy) return toast('还没有下载好的安装包');
+     try{ await Update.install(rdy.path); toast('已交给系统安装'); }catch(e){ toast(e.message); } })();
 $('#updPageBtn').onclick=()=>{
   const u = (updInfo && updInfo.page) || 'https://github.com/Kepler16f/timemaster/releases';
   if(window.Transport) Transport.openExternal(u);
 };
+
+/* 启动自动检查（仅桌面端、且设置里没关掉）：半天只悄悄问一次——
+   GitHub 匿名限流 60 次/小时，反复开开关关不该把额度吃光；检查失败一律不打扰 */
+const AUTO_SPAN = 12*3600*1000;
+async function autoCheckUpdate(){
+  if(!isDesktopShell() || !autoUpdOn()) return;
+  if(Date.now() - Number(localStorage.getItem('tm:autoUpdAt')||0) < AUTO_SPAN) return;
+  localStorage.setItem('tm:autoUpdAt', String(Date.now()));
+  try{
+    const info = await Update.check(APP_VERSION);
+    updInfo = info; renderUpdate();
+    if(!info.hasUpdate) return;
+    const rdy = Update.ready();
+    if(rdy && rdy.ver===info.latest) showUpdModal('done', `v${info.latest} 安装包已就绪，点「立即安装」即可覆盖升级。`);
+    else showUpdModal('ask', `当前 v${APP_VERSION} → 最新 v${info.latest}\n${(info.notes||'').replace(/\s+/g,' ').slice(0,160)}`);
+  }catch(e){ /* 自动检查失败保持安静，用户仍可在设置里手动检查 */ }
+}
 
 /* ---------- 视图导航 & FAB ---------- */
 $('#myName').oninput=onNameInput;
@@ -1582,7 +1678,7 @@ $('#todayBtn').onclick=()=>{ state.day=todayStr(); syncYm(); renderCalendar(true
 
 /* ---------- 启动：除首次安装外，直接回到最近一次进入的空间 ---------- */
 async function boot(){
-  applyTheme(); showDeviceId(); renderUpdate(); syncDayView();
+  applyTheme(); showDeviceId(); renderUpdate(); syncAutoUpd(); syncDayView();
   /* 桌面端系统日历对接暂缓：整组隐藏，别留一个点了只会报错的按钮 */
   if (isDesktopShell()) $('#calGroup').hidden = true;
   const last=localStorage.getItem('tm:lastSpace'), cfg=Dav.cfg();
@@ -1591,5 +1687,6 @@ async function boot(){
   }else initStart();
   adoptNativeDeviceId(8); // 鸿蒙桥可能晚于首屏才注入，重试等一会儿
   if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话
+  autoCheckUpdate(); // 有新版弹一次，装好前的提醒就靠它
 }
 boot();

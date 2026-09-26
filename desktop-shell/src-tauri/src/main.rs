@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
@@ -29,7 +31,6 @@ struct HttpReply {
 }
 
 fn agent() -> &'static ureq::Agent {
-    use std::sync::OnceLock;
     use std::time::Duration;
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
@@ -110,6 +111,233 @@ fn open_url(url: String) -> Result<(), String> {
     spawn.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/* ===== 应用内更新：下载安装包（多通道回退 + sha256 校验）→ 轮询进度 → 拉起安装器 ===== */
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct DownloadProgress {
+    status: String, // idle | downloading | done | error
+    percent: u32,
+    received: u64,
+    total: u64,
+    path: String,
+    used: String, // 哪条通道下的，JS 侧记下来下次优先用它
+    error: String,
+}
+
+fn progress() -> &'static Mutex<DownloadProgress> {
+    static P: OnceLock<Mutex<DownloadProgress>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(DownloadProgress::default()))
+}
+
+fn set_progress(f: impl FnOnce(&mut DownloadProgress)) {
+    if let Ok(mut g) = progress().lock() {
+        f(&mut g);
+    }
+}
+
+/* 点「取消」不杀线程，只置标志：下载循环在下一个分块边界收手并删掉 .part，
+   免得留个半截包在缓存目录里被当成可用的安装包 */
+static CANCEL: AtomicBool = AtomicBool::new(false);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateRequest {
+    urls: Vec<String>,
+    name: String,
+    #[serde(default)]
+    sha256: String,
+}
+
+fn updates_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("updates");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/* 安装包名来自 GitHub 资产字段：只留安全字符，顺带把路径分隔符削掉 */
+fn safe_name(raw: &str) -> String {
+    let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
+    let cleaned: String = base
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .collect();
+    let trimmed = cleaned.trim_matches('.');
+    if trimmed.is_empty() {
+        "update.bin".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/* 下载不能用 agent()：那个带了 90 秒总超时，几十 MB 的包在慢网上必然被掐断。
+   这里只设连接与单次读取超时，不限总时长，慢但稳地把它下完 */
+fn dl_agent() -> &'static ureq::Agent {
+    use std::time::Duration;
+    static A: OnceLock<ureq::Agent> = OnceLock::new();
+    A.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(15))
+            .timeout_read(Duration::from_secs(60))
+            .build()
+    })
+}
+
+fn download_one(url: &str, dest: &Path, expect_sha: &str) -> Result<(), String> {
+    use std::io::Write;
+    use sha2::{Digest, Sha256};
+
+    let resp = match dl_agent().get(url).call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, _)) => return Err(format!("HTTP {}", code)),
+        Err(e) => return Err(format!("{}", e)),
+    };
+    let total = resp.header("content-length").and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0);
+    let mut reader = resp.into_reader();
+    let mut part_os = dest.as_os_str().to_os_string();
+    part_os.push(".part");
+    let part = PathBuf::from(part_os);
+    let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut got: u64 = 0;
+    loop {
+        if CANCEL.load(Ordering::SeqCst) {
+            drop(file);
+            let _ = std::fs::remove_file(&part);
+            return Err("已取消下载".into());
+        }
+        let n = reader.read(&mut buf).map_err(|e| format!("下载中断：{}", e))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        file.write_all(&buf[..n]).map_err(|e| format!("写入失败：{}", e))?;
+        got += n as u64;
+        // 100% 只由「校验通过 + 落盘完成」那一步给，进度条才不会停在 100 又报错
+        let percent = if total > 0 { ((got * 100) / total).min(99) as u32 } else { 0 };
+        set_progress(|p| {
+            p.status = "downloading".into();
+            p.received = got;
+            p.total = total;
+            p.percent = percent;
+        });
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    drop(file);
+    let hex = format!("{:x}", hasher.finalize());
+    if !expect_sha.is_empty() && hex != expect_sha {
+        let _ = std::fs::remove_file(&part);
+        return Err("安装包校验不通过（sha256 不匹配）".into());
+    }
+    let _ = std::fs::remove_file(dest);
+    std::fs::rename(&part, dest).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn download_update(app: AppHandle, req: UpdateRequest) -> Result<(), String> {
+    let urls: Vec<String> = req.urls.into_iter().filter(|u| u.starts_with("https://")).collect();
+    if urls.is_empty() {
+        return Err("没有可用的下载链接".into());
+    }
+    let dir = updates_dir(&app)?;
+    let name = safe_name(&req.name);
+    let sha = req.sha256.trim().to_ascii_lowercase();
+    CANCEL.store(false, Ordering::SeqCst);
+    set_progress(|p| *p = DownloadProgress { status: "downloading".into(), ..Default::default() });
+
+    std::thread::spawn(move || {
+        let dest = dir.join(&name);
+        let mut part_os = dest.as_os_str().to_os_string();
+        part_os.push(".part");
+        let part = PathBuf::from(part_os);
+        let mut last = String::from("下载失败");
+        for u in &urls {
+            match download_one(u, &dest, &sha) {
+                Ok(()) => {
+                    let path = dest.to_string_lossy().into_owned();
+                    set_progress(|p| *p = DownloadProgress {
+                        status: "done".into(),
+                        percent: 100,
+                        path,
+                        used: u.clone(),
+                        ..Default::default()
+                    });
+                    return;
+                }
+                Err(e) => {
+                    // 半截的 .part 不能留在更新目录里，否则下次以为还在下
+                    let _ = std::fs::remove_file(&dest);
+                    let _ = std::fs::remove_file(&part);
+                    let stopped = CANCEL.load(Ordering::SeqCst) || e.contains("取消");
+                    last = e;
+                    if stopped {
+                        break;
+                    }
+                }
+            }
+        }
+        let msg = last;
+        set_progress(|p| {
+            p.status = "error".into();
+            p.error = msg;
+        });
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn download_progress() -> DownloadProgress {
+    progress().lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn cancel_download() {
+    CANCEL.store(true, Ordering::SeqCst);
+}
+
+/* 拉起安装器：路径必须落在更新目录内（canonicalize 后再比，Windows 的 \\?\ 前缀两边一致才比得出），
+   不然前端传个任意路径进来就能执行任意 exe */
+#[tauri::command]
+fn install_update(app: AppHandle, path: String) -> Result<String, String> {
+    let dir = std::fs::canonicalize(updates_dir(&app)?).map_err(|e| e.to_string())?;
+    let p = std::fs::canonicalize(&path).map_err(|e| format!("找不到安装包：{}", e))?;
+    if !p.starts_with(&dir) {
+        return Err("只允许安装更新目录里的文件".into());
+    }
+
+    #[cfg(windows)]
+    {
+        use std::time::Duration;
+        std::process::Command::new(&p).spawn().map_err(|e| e.to_string())?;
+        let a = app.clone();
+        std::thread::spawn(move || {
+            // 先让前端把「正在退出」显示出来；NSIS 也要等进程真的退干净才不报「文件被占用」
+            std::thread::sleep(Duration::from_millis(800));
+            a.exit(0);
+        });
+        return Ok("已启动安装程序，应用即将自动退出".into());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let name = p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
+        return Ok(format!(
+            "安装包已就绪：{}\nLinux 不能自装 deb，请在终端执行：sudo apt install \"./{}\"",
+            p.to_string_lossy(),
+            name
+        ));
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = (app, dir);
+        Err("该平台暂不支持应用内安装".into())
+    }
+}
+
 fn main() {
     /* WebView2 默认把用户数据写到 exe 旁：<perMachine> 升级换目录 = 网盘配置/空间列表全丢。
        固定到 %APPDATA%，安装位置随便挪 */
@@ -132,7 +360,10 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![http_request, device_id, open_url])
+        .invoke_handler(tauri::generate_handler![
+            http_request, device_id, open_url,
+            download_update, download_progress, cancel_download, install_update
+        ])
         .run(tauri::generate_context!())
         .expect("Reunion 桌面端启动失败");
 }
