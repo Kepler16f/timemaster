@@ -98,8 +98,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: reunion-desktop-${{ matrix.label }}
+          # 不能写 archive: false：Linux 一条有两个文件（deb + AppImage），不打包会直接报错
           path: dist/*
-          archive: false
 
       - name: 追加到已有 Release（绝不新建）
         if: inputs.publish == 'true'
