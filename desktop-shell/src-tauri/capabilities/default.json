@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "主窗口：自定义 command（http_request/device_id/open_url）不走 ACL，这里只需核心权限",
+  "windows": ["main"],
+  "permissions": ["core:default", "window-state:default"]
+}

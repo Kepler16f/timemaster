@@ -11,6 +11,10 @@ harmony-shell/oh_modules/
 harmony-shell/build/
 harmony-shell/.hvigor/
 harmony-shell/.idea/
+# 桌面壳：www 由 scripts/sync-desktop-web.mjs 生成，Rust 产物一律不入库（同 harmony 的 rawfile/www 规矩）
+desktop-shell/www/
+desktop-shell/src-tauri/target/
+desktop-shell/src-tauri/gen/
 *.tsbuildinfo
 .ci-dl/
 RELEASE_NOTES.md

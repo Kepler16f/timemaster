@@ -3,6 +3,10 @@
   'use strict';
 
   const cap = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.NativeHttp) || null;
+  /* Tauri（桌面端）：withGlobalTauri 打开后走 window.__TAURI__.core.invoke，
+     对应 Rust 侧 http_request/device_id/open_url 三个 command，返回结构与本文件约定同构 */
+  const taCore = (window.__TAURI__ && window.__TAURI__.core) || null;
+  const tauriInvoke = taCore && typeof taCore.invoke === 'function' ? (c, a) => taCore.invoke(c, a) : null;
   /* 鸿蒙桥必须在每次调用时取：ArkWeb 的 javaScriptProxy 可能晚于本脚本才注入 */
   function harmony() {
     const o = window.__HarmonyNative;
@@ -51,7 +55,10 @@
     const har = harmony();
     if (cap) r = await cap.request({ method, url, headers, body });
     else if (har) r = await harmonyCall('httpRequest', [JSON.stringify({ method, url, headers, body })]);
-    else {
+    else if (tauriInvoke) {
+      const t = await tauriInvoke('http_request', { req: { method, url, headers, body: body == null ? null : String(body) } });
+      return { status: t.status, headers: t.headers || {}, text: t.body || '' };
+    } else {
       const res = await fetch(url, { method, headers, body: body == null ? undefined : body });
       const hs = {};
       res.headers.forEach((v, k) => (hs[k] = v));
@@ -68,6 +75,7 @@
   /** 壳内的稳定设备标识（原生存储，不受网页 localStorage 被清影响）；浏览器里返回 null */
   async function deviceId() {
     try {
+      if (tauriInvoke) return (await tauriInvoke('device_id')) || null;
       if (cap && typeof cap.deviceId === 'function') {
         const r = await cap.deviceId({});
         return (r && r.id) || null;
@@ -81,9 +89,18 @@
     return null;
   }
 
+  /** 桌面端用系统浏览器打开外部链接（如 GitHub 发布页）；其余环境退回 window.open */
+  async function openExternal(url) {
+    if (tauriInvoke) {
+      try { await tauriInvoke('open_url', { url: String(url) }); return; } catch (e) { /* 失败再走通用路径 */ }
+    }
+    window.open(url, '_blank');
+  }
+
   window.Transport = {
-    request, basicAuth, harmonyCall, deviceId,
-    get isNative() { return !!(cap || harmony()); },
+    request, basicAuth, harmonyCall, deviceId, openExternal,
+    get isNative() { return !!(cap || harmony() || tauriInvoke); },
+    get isDesktop() { return !!tauriInvoke; },
     get hasHarmony() { return !!harmony(); },
   };
 })();

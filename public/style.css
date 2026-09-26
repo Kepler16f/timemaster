@@ -435,7 +435,81 @@ input[type=checkbox]:checked::after { content: ''; position: absolute; box-sizin
 textarea { border: 1.5px solid transparent; border-radius: 12px; padding: 12px 14px; font-size: 14px; background: var(--field-bg); outline: none; width: 100%; resize: none; font-family: ui-monospace, Consolas, monospace; word-break: break-all; transition: border-color .15s, background .15s; color: var(--text); }
 textarea:focus { border-color: var(--accent); background: var(--field-bg); box-shadow: 0 0 0 3px rgba(240,70,58,.12); }
 
-/* ---------- 横屏（矮屏）：整体压缩，让月视图与时间轴不用反复滚动 ---------- */
+/* =====================================================================
+   ===== 桌面端（Tauri 壳，html.tm-desktop）：≥1100px 走 PC 布局 =====
+   左侧空间栏常驻 + 主体铺满；平板（<1100 或未挂 tm-desktop）保持原两栏不动
+   ===================================================================== */
+.rail {
+  display: none; position: fixed; left: 0; top: 0; bottom: 0; width: 264px; z-index: 44;
+  flex-direction: column; gap: 10px; padding: 16px 12px 12px;
+  background: var(--card); border-right: 1px solid var(--line); overflow-y: auto; scrollbar-width: thin;
+}
+.rail-brand { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 800; padding: 2px 6px 8px; }
+.rail-logo { font-size: 20px; }
+.rail-sec { font-size: 12px; font-weight: 700; color: var(--text-weak); letter-spacing: 1px; padding: 2px 4px 0; }
+.rail-spaces { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; }
+.rail-spaces .space-item { padding: 10px 12px; }
+.rail-foot { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line); padding-top: 10px; }
+.rail-btn { display: flex; align-items: center; gap: 8px; text-align: left; border: none; background: transparent; color: var(--sub); padding: 9px 12px; border-radius: 11px; font-size: 14px; cursor: pointer; }
+.rail-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+@media (min-width: 1100px) {
+  html.tm-desktop .rail { display: flex; }
+  html.tm-desktop body.on-start .rail { display: none; }
+  /* 主体让出左栏，超宽屏内容到 1400px 封顶靠左，不再整块水平居中 */
+  html.tm-desktop #calendarScreen, html.tm-desktop #settingsScreen { max-width: none; margin: 0; padding-left: 264px; }
+  html.tm-desktop #calendarScreen > * { max-width: 1400px; }
+  html.tm-desktop .tabbar { display: none !important; }
+  /* 月历格子给足桌面高度，色块与数字放大 */
+  html.tm-desktop .calendar.month { grid-auto-rows: minmax(72px, 1fr); }
+  html.tm-desktop .calendar.month .cell { padding: 6px 6px; gap: 4px; }
+  html.tm-desktop .calendar.month .date-num { width: 30px; height: 30px; font-size: 15px; }
+  html.tm-desktop .calendar.month .mdot { width: 10px; height: 10px; }
+  html.tm-desktop .calendar.month .dots { max-height: 32px; }
+  html.tm-desktop .calendar.month .cell-cnt { font-size: 11px; }
+  /* 弹层更宽、名单更高，鼠标操作不必挤着滚 */
+  html.tm-desktop .modal { max-width: 560px; }
+  html.tm-desktop .batch-list, html.tm-desktop .member-list { max-height: 58vh; }
+  /* 设置页成两列卡片墙 */
+  html.tm-desktop .settings-body {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 460px));
+    justify-content: center; align-items: start; gap: 18px; padding: 4px 24px 40px;
+  }
+  html.tm-desktop .settings-body > * { max-width: none; }
+  /* 底栏没了，FAB 和时间轴留白都收回来 */
+  html.tm-desktop .fab { right: 28px; bottom: 28px; }
+  html.tm-desktop .cal-main { padding-bottom: 24px; }
+  html.tm-desktop .cal-main:not(.with-agenda) { padding-bottom: 24px; }
+  html.tm-desktop .cal-main.tgrid-mode:not(.with-agenda) { padding-bottom: 0; }
+  html.tm-desktop .tg-body { padding-bottom: 12px; }
+}
+
+/* 鼠标悬停态：触屏设备（hover:none）完全不参与，安卓平板不受污染 */
+@media (hover: hover) and (pointer: fine) {
+  .rail-btn:hover { background: var(--field-bg); }
+  .rail-btn.active:hover { background: var(--accent-soft); }
+  .si-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .si-btn.danger:hover { border-color: #e5484d; color: #e5484d; }
+  .big-btn:hover { filter: brightness(1.04); }
+  .big-btn.ghost:hover { border-color: var(--tint-line); background: var(--tint); }
+  .action-btn:hover { filter: brightness(.98); }
+  .nav-btn:hover, .icon-btn:hover, .sync-btn:hover { background: var(--field-bg); }
+  .today-btn:hover { filter: brightness(1.06); }
+  .cell:hover { background: var(--field-bg); }
+  .cell.sel:hover, .space-item.current:hover { background: var(--accent-soft); }
+  .space-item:hover { border-color: var(--tint-line); }
+  .person-tag:hover { transform: scale(1.05); }
+  .ev-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); }
+  .tg-ev:hover { filter: brightness(1.07); z-index: 3; }
+  .ad-chip:hover, .member-row:hover { filter: brightness(.98); }
+  .month-toggle:hover { color: var(--text); }
+}
+
+/* 桌面滚动条细一点，别用系统默认那种粗 */
+html.tm-desktop ::-webkit-scrollbar { width: 10px; height: 10px; }
+html.tm-desktop ::-webkit-scrollbar-thumb { background: var(--tint-line); border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+html.tm-desktop ::-webkit-scrollbar-track { background: transparent; }
+
 @media (orientation: landscape) and (max-height: 620px) {
   :root { --hour-h: 30px; }
   .topbar { padding: calc(6px + var(--sa-top)) 14px 4px; }

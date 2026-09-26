@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <script>/* 桌面壳（Tauri）：放开缩放、给 <html> 挂 tm-desktop 门控桌面布局；手机端（含安卓平板宽屏）完全不受影响 */(function(){if(window.__TAURI__){document.documentElement.classList.add('tm-desktop');var m=document.querySelector('meta[name=viewport]');if(m)m.content='width=device-width, initial-scale=1.0, viewport-fit=cover';}})();</script>
   <meta name="theme-color" content="#f0463a" />
   <meta name="color-scheme" content="light dark" />
   <script>/* 防闪白：渲染前应用已存主题 */(function(){try{var t=localStorage.getItem('tm:theme')||'auto';var d=t==='dark'||(t==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.dataset.theme=d?'dark':'light';}catch(e){}})();</script>
@@ -170,7 +171,7 @@
         </div>
       </div>
 
-      <div class="set-group">
+      <div class="set-group" id="calGroup">
         <div class="set-title">系统日历</div>
         <button class="big-btn ghost" id="importBtn">🔄 导入 / 回写系统日历</button>
       </div>
@@ -208,6 +209,7 @@
             <button class="big-btn ghost" id="updCheckBtn">🔄 检查更新</button>
             <button class="big-btn hidden" id="updDlBtn">⬇ 后台下载新版</button>
             <button class="big-btn hidden" id="updInstallBtn">📲 立即安装</button>
+            <button class="big-btn hidden" id="updPageBtn">🌐 打开发布页下载</button>
           </div>
           <p class="set-note" id="updNote" hidden></p>
         </div>
@@ -456,6 +458,19 @@
       </div>
     </div>
   </div>
+
+  <!-- ============ 桌面端左侧空间栏（≥1100px 且非开屏页时显示，替代悬浮药丸底栏） ============ -->
+  <aside class="rail" id="rail">
+    <div class="rail-brand"><span class="rail-logo">📅</span><span>Reunion</span></div>
+    <div class="rail-sec">我的空间</div>
+    <div class="rail-spaces space-list" id="railSpaces"></div>
+    <div class="rail-foot">
+      <button class="rail-btn" id="railCalendar">🗓️ 日历</button>
+      <button class="rail-btn" id="railSettings">⚙️ 设置</button>
+      <button class="rail-btn" id="railCreate">＋ 新建空间</button>
+      <button class="rail-btn" id="railJoin">🔑 邀请码加入</button>
+    </div>
+  </aside>
 
   <nav class="tabbar hidden" id="tabbar">
     <button class="tab" data-tab="room" id="tabRoom">

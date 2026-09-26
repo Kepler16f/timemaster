@@ -1,0 +1,14 @@
+{
+  "name": "reunion-desktop",
+  "version": "0.4.0",
+  "private": true,
+  "description": "Reunion 桌面端 Tauri 壳（前端资源来自仓库 public/，构建前由 scripts/sync-desktop-web.mjs 同步）",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "node ../scripts/sync-desktop-web.mjs && tauri dev",
+    "build": "node ../scripts/sync-desktop-web.mjs && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

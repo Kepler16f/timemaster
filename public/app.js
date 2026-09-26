@@ -225,6 +225,32 @@ window.__tmBack=function(){
   return 'exit';
 };
 
+/* ---------- 桌面端键盘操作（仅 Tauri 壳注册；手机/浏览器键盘事件行为不同，宁可不给） ---------- */
+if (window.Transport && Transport.isDesktop) {
+  const anyModalOpen = () => [...document.querySelectorAll('.modal-mask')].some((m) => !m.hidden);
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+    if (e.key === 'Escape') { if (!typing && closeTopModal()) e.preventDefault(); return; }
+    if (typing) return;
+    const onCal = !$('#calendarScreen').classList.contains('hidden');
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R')) { e.preventDefault(); if (onCal) $('#syncBtn').click(); return; }
+    /* 桌面习惯：拿着配置码进来先按 Ctrl+V —— 直接弹「导入配置码」，再按一次就是往文本框粘贴 */
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V') && !onCal && !anyModalOpen()) { $('#cfgImportBtn').click(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!onCal || anyModalOpen() || !state.code) return;
+    switch (e.key) {
+      case 'ArrowLeft': navStep(-1); break;
+      case 'ArrowRight': navStep(1); break;
+      case 't': case 'T': state.day = todayStr(); syncYm(); renderCalendar(true); break;
+      case 'n': case 'N': openEventModal(state.day); break;
+      case 'm': case 'M': setView('month'); break;
+      case 'w': case 'W': setView('week'); break;
+      case 'd': case 'D': if (state.dayView) setView('day'); break;
+    }
+  });
+}
+
 /* 键盘弹出时收起底栏（fixed 定位会被顶到键盘上方）。
    鸿蒙收起输入法不一定触发 focusout，所以盯「可视视口有没有被压矮」，输入法一退底栏就回来 */
 let kbBase={w:-1,h:0};
@@ -572,7 +598,18 @@ function renderSpaceMgmt(){
   const can = !!state.code && Store.canRename(state.code);
   $('#renameBtn').classList.toggle('hidden', !can);
   $('#renameLockNote').classList.toggle('hidden', !(state.code && !can));
+  renderRail();
 }
+/* ---------- 桌面端左侧空间栏：空间列表常驻（手机上的「切换空间」弹层在桌面上不必每次点开） ---------- */
+function renderRail(){
+  const box=$('#railSpaces');
+  if(!box || !window.Transport || !Transport.isDesktop) return;
+  spaceItems(box,(s)=>{ if(s.code!==state.code && needDav(s.code)) enterSpace(s.code); });
+}
+$('#railCalendar').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
+$('#railSettings').onclick=openSettings;
+$('#railCreate').onclick=()=>{ if(needDav()) openSpaceModal('create'); };
+$('#railJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 $('#renameBtn').onclick=()=>{
   const data=Store.get(state.code); if(!data) return;
   $('#renameInput').value=data.name||'';
@@ -853,7 +890,7 @@ function startPolling(){
 function stopPolling(){ if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; } }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && state.code) Store.syncCode(state.code).then(updateSyncChip); });
 Store.onChange((code)=>{ if(code===state.code){
-  renderPeopleTags(); renderCalendar(); updateSyncChip();
+  renderPeopleTags(); renderCalendar(); updateSyncChip(); renderRail();
   const d=Store.get(code); if(d) $('#spaceName').textContent=d.name||'共享日程';
   if(!$('#settingsScreen').classList.contains('hidden')) renderSpaceMgmt();
 } });
@@ -1468,15 +1505,18 @@ $('#importSave').onclick=async()=>{
 
 /* ---------- 应用内更新（仅安卓壳；鸿蒙 HAP 不能自装，整组隐藏） ---------- */
 let updInfo = null;
+const isDesktopShell = () => !!(window.Transport && Transport.isDesktop);
 function renderUpdate(){
-  const grp=$('#updGroup'); if(grp) grp.hidden = !Update.canAutoInstall;
-  const dl=$('#updDlBtn'), ins=$('#updInstallBtn'), note=$('#updNote');
+  /* 桌面端没有壳内自动安装（暂缓和安卓 NativeUpdate 同级的实现），但「检查更新 + 去发布页」照常给 */
+  const grp=$('#updGroup'); if(grp) grp.hidden = !Update.canAutoInstall && !isDesktopShell();
+  const dl=$('#updDlBtn'), ins=$('#updInstallBtn'), page=$('#updPageBtn'), note=$('#updNote');
   /* 这两个按钮是用 .hidden 类藏起来的，切换必须走 classList——
      只改 el.hidden 属性的话类名还留在身上，按钮永远出不来（下载/安装入口就是这么丢的） */
   let rdy = Update.ready();
   if(rdy && (!updInfo || rdy.ver !== updInfo.latest)){ Update.clearReady(); rdy = null; } // 旧版残留的包不算就绪
-  dl.classList.toggle('hidden', !(updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy);
+  dl.classList.toggle('hidden', !(Update.canAutoInstall && updInfo && updInfo.hasUpdate && updInfo.url) || !!rdy);
   ins.classList.toggle('hidden', !(rdy && Update.canAutoInstall));
+  if(page) page.classList.toggle('hidden', !(isDesktopShell() && updInfo && updInfo.hasUpdate));
   note.hidden = !updInfo;
   if(updInfo){
     const lines=[];
@@ -1517,6 +1557,10 @@ $('#updInstallBtn').onclick=async()=>{
   try{ await Update.install(rdy.path); toast('已交给系统安装'); }
   catch(e){ toast(e.message); }
 };
+$('#updPageBtn').onclick=()=>{
+  const u = (updInfo && updInfo.page) || 'https://github.com/Kepler16f/timemaster/releases';
+  if(window.Transport) Transport.openExternal(u);
+};
 
 /* ---------- 视图导航 & FAB ---------- */
 $('#myName').oninput=onNameInput;
@@ -1539,6 +1583,8 @@ $('#todayBtn').onclick=()=>{ state.day=todayStr(); syncYm(); renderCalendar(true
 /* ---------- 启动：除首次安装外，直接回到最近一次进入的空间 ---------- */
 async function boot(){
   applyTheme(); showDeviceId(); renderUpdate(); syncDayView();
+  /* 桌面端系统日历对接暂缓：整组隐藏，别留一个点了只会报错的按钮 */
+  if (isDesktopShell()) $('#calGroup').hidden = true;
   const last=localStorage.getItem('tm:lastSpace'), cfg=Dav.cfg();
   if(last && cfg && cfg.user && Store.get(last)){
     try{ await enterSpace(last); }catch(e){ initStart(); }
