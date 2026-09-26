@@ -20,7 +20,7 @@ permissions:
   contents: write
 
 env:
-  # Tauri/Linux 的编译期依赖：webkit2gtk-4.1 是硬性要求（AppImage 里已含运行时，用户机不需要）
+  # Tauri/Linux 的编译期依赖：webkit2gtk-4.1 是硬性要求（deb 不捆绑运行时，用户机自己装）
   LINUX_DEPS: >-
     libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev
     libssl-dev libayatana-appindicator3-dev librsvg2-dev
@@ -88,7 +88,7 @@ jobs:
           test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
           mkdir -p dist
           find "desktop-shell/src-tauri/target/${{ matrix.target }}/release/bundle" -type f \
-            \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) | while read -r f; do
+            \( -name '*.exe' -o -name '*.deb' \) | while read -r f; do
               ext="${f##*.}"
               cp -v "$f" "dist/reunion-$VER-${{ matrix.label }}.$ext"
             done
@@ -98,8 +98,10 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: reunion-desktop-${{ matrix.label }}
-          # 不能写 archive: false：Linux 一条有两个文件（deb + AppImage），不打包会直接报错
+          # 每个 target 只产一个安装包，archive:false 让制品就是原始文件本身——
+          # 免下载后再解一层 zip（Linux 以前带 AppImage 时有两个文件才会报错，现在只出 deb）
           path: dist/*
+          archive: false
 
       - name: 追加到已有 Release（绝不新建）
         if: inputs.publish == 'true'

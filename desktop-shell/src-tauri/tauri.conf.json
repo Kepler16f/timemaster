@@ -29,8 +29,7 @@
     "active": true,
     "targets": [
       "nsis",
-      "deb",
-      "appimage"
+      "deb"
     ],
     "category": "Productivity",
     "shortDescription": "Reunion · 多人共享日程",
@@ -47,8 +46,7 @@
       }
     },
     "linux": {
-      "deb": {},
-      "appimage": {}
+      "deb": {}
     }
   }
 }

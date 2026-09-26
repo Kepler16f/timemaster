@@ -62,7 +62,7 @@
   /* GitHub 现在会在资产上直接给 `digest: sha256:...`，走第三方反代时拿它校一遍，
      被换包/半路截断都能当场发现，而不是等系统安装器报「解析包出错」 */
   /* 桌面四目标资产命名（desktop.yml 统一改成这个样子）：
-     reunion-<ver>-win-x64-setup.exe / -win-arm64-setup.exe / -linux-x64.deb / -linux-x64.AppImage / -linux-arm64.… */
+     reunion-<ver>-win-x64.exe / -win-arm64.exe / -linux-x64.deb / -linux-arm64.deb */
   function desktopAsset(list) {
     const ua = navigator.userAgent;
     const arch = /aarch64|arm64/i.test(ua) ? 'arm64' : 'x64';
