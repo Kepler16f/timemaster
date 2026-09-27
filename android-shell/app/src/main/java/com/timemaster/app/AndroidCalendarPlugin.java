@@ -91,11 +91,30 @@ public class AndroidCalendarPlugin extends Plugin {
         call.resolve();
     }
 
+    /** 日历 id → 该日历的（显示名, 账户名）：导入时按分组挑选、事后按分组批量管理都靠它 */
+    private Map<String, String[]> calendarNames() {
+        Map<String, String[]> map = new HashMap<>();
+        String[] proj = { Calendars._ID, Calendars.CALENDAR_DISPLAY_NAME, Calendars.ACCOUNT_NAME };
+        try (Cursor c = getContext().getContentResolver().query(
+                Calendars.CONTENT_URI, proj, null, null, null)) {
+            while (c != null && c.moveToNext()) {
+                map.put(String.valueOf(c.getLong(0)), new String[]{
+                        c.isNull(1) ? "" : c.getString(1),
+                        c.isNull(2) ? "" : c.getString(2),
+                });
+            }
+        } catch (Exception e) {
+            return new HashMap<>(); // 拿不到名字不影响读日程，分组退化成「未命名日历」
+        }
+        return map;
+    }
+
     @PluginMethod
     public void fetchEvents(PluginCall call) {
         long from = call.getLong("from", System.currentTimeMillis() - 365 * DAY);
         long to = call.getLong("to", System.currentTimeMillis() + 365 * DAY);
         JSArray out = new JSArray();
+        Map<String, String[]> calNames = calendarNames();
         String[] proj = {
                 Events._ID, Events.CALENDAR_ID, Events.TITLE, Events.ALL_DAY,
                 Events.DTSTART, Events.DTEND, Events.RRULE,
@@ -119,6 +138,11 @@ public class AndroidCalendarPlugin extends Plugin {
                 long end = c.isNull(5) ? start : c.getLong(5);
                 JSObject ev = new JSObject();
                 ev.put("sourceUid", "cal:" + calId + ":" + id);
+                String[] cal = calNames.get(String.valueOf(calId));
+                if (cal != null) {
+                    ev.put("calDisp", cal[0]);
+                    ev.put("calAcct", cal[1]);
+                }
                 ev.put("title", c.isNull(2) ? "未命名日程" : c.getString(2));
                 ev.put("allDay", allDay);
                 ev.put("date", df.format(new Date(start)));

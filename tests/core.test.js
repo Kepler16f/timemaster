@@ -19,7 +19,7 @@ function load(file) {
 }
 load('ics.js');
 win.App = { clientId: 'zDevice', me: { name: 'T', color: '#fff' } };
-win.Dav = { get: async () => ({ status: 404 }), put: async () => ({ status: 200 }) };
+win.Dav = { get: async () => ({ status: 404 }), put: async () => ({ status: 200 }), remove: async (code) => { (win.Dav.removed = win.Dav.removed || []).push(code); } };
 load('store.js');
 
 const { parseICS, expandOccurrences } = win.IcsParser;
@@ -270,7 +270,7 @@ store.attach('C1', local);
       store.members('S10').map((m) => [m.name, m.role, m.events]), [['妈妈', 'creator', 0], ['T', 'admin', 1], ['同学', 'member', 1]]);
 
     /* 退出空间：写云端 + 本机副本要等云端确认后才清（清副本在界面层做） */
-    eq('leave: 非创建者可以退出', await store.leave('S10', { dropMine: true }), true);
+    eq('leave: 非创建者可以退出', await store.leave('S10', { dropMine: true }), { purged: false });
     const dl = store.get('S10');
     eq('leave: 成员表里标成已退出、且是自己标的', [!!dl.members.sisDev.out, dl.members.sisDev.outBy], [true, 'sisDev']);
     eq('leave: 勾选后自己名下的日程打了墓碑', [!!dl.events.s1, !!dl.deletions.s1], [false, true]);
@@ -365,6 +365,62 @@ store.attach('C1', local);
       win.Auth = { memberKey: () => 'sisDev', session: () => null };
       return r;
     })(), false);
+  }
+
+  /* ---------- 8b. 解散空间 / 只剩 0 人自动删除 / 日历分组名回填 ---------- */
+  {
+    /* S12：创建者 dad + 普通成员 kid（本机当前身份）。网盘账号按 S10 那个规则给，
+       kid 拿的是别的账号，所以只是普通成员——解散只归创建者管 */
+    win.Auth = { memberKey: () => 'kid', session: () => null };
+    await store.attach('S12', {
+      v: 2, code: 'S12', name: '全家桶', createdBy: 'dad',
+      members: {
+        dad: { name: '爸爸', color: '#1', joinedAt: 1, updatedAt: 1, by: 'dad', davId: 'aHome' },
+        kid: { name: 'T', color: '#2', dev: 'kid', joinedAt: 2, updatedAt: 2, by: 'kid', davId: 'aOther' },
+      },
+      events: {
+        d1: { id: 'd1', ownerId: 'dad', title: '爸爸的日程', date: '2026-09-21', updatedAt: 1, by: 'dad' },
+        k1: { id: 'k1', ownerId: 'kid', title: '我的日程', date: '2026-09-22', updatedAt: 1, by: 'kid', sourceUid: 'cal:7:99' },
+      },
+      deletions: {}, retired: {},
+    });
+    eq('dis: 人数只数还活着的成员', store.liveCount('S12'), 2);
+    eq('dis: 非创建者解散不了', await store.dissolve('S12', {}), false);
+
+    win.Auth = { memberKey: () => 'dad', session: () => null };
+    eq('dis: 创建者解散成功，但别人还在→数据留着给他看告知', await store.dissolve('S12', {}), { purged: false });
+    const s12 = store.get('S12');
+    eq('dis: 云端记下谁解散的', [s12.dissolved.by, !!s12.members.dad.out], ['dad', true]);
+    eq('dis: 解散不动任何人的日程', [!!s12.events.d1, !!s12.events.k1], [true, true]);
+    eq('dis: 本机认出这是个已解散的空间', store.isDissolved('S12'), true);
+    eq('dis: 已解散的空间不再把人补回成员表', store.ensureMember('S12'), false);
+    /* 同步一轮：死掉的空间不能被自愈逻辑（补成员/折叠/推名单）复活 */
+    await store.syncCode('S12');
+    eq('dis: 同步后创建者仍是「已退出」，没被 ensureSelf 抹掉', !!store.get('S12').members.dad.out, true);
+    eq('dis: 解散之后只剩 kid 一个人', store.liveCount('S12'), 1);
+
+    /* 最后一个人确认告知之后：自己也退出，人数归零 → 顺手把网盘上这份文档删掉 */
+    eq('dis: 还有人没确认时绝不删云端', win.Dav.removed, undefined);
+    win.Auth = { memberKey: () => 'kid', session: () => null };
+    eq('dis: 最后一个人确认解散后把云端数据删了', await store.acknowledgeDissolve('S12'), true);
+    eq('dis: 删除动作确实发给了网盘', win.Dav.removed, ['S12']);
+    eq('dis: 全员退出后人数为 0', store.liveCount('S12'), 0);
+
+    /* 导入系统日历时只存了日历 id 的老日程：拿到 id→名字后回填分组名，按分组管理才分得开 */
+    await store.attach('S13', {
+      v: 2, code: 'S13', name: 'S13', createdBy: 'kid',
+      members: { kid: { name: 'T', color: '#2', dev: 'kid', joinedAt: 1, updatedAt: 1, by: 'kid' } },
+      events: {
+        k1: { id: 'k1', ownerId: 'kid', title: '有分组', date: '2026-09-22', updatedAt: 1, by: 'kid', sourceUid: 'cal:7:99', calDisp: '家庭日历' },
+        k2: { id: 'k2', ownerId: 'kid', title: '缺分组', date: '2026-09-23', updatedAt: 1, by: 'kid', sourceUid: 'cal:8:12' },
+        k3: { id: 'k3', ownerId: 'kid', title: '手工建的', date: '2026-09-24', updatedAt: 1, by: 'kid' },
+      },
+      deletions: {}, retired: {},
+    });
+    eq('grp: 按 id→名字回填缺失的分组（已有一致的不动）', store.tagSourceGroups('S13', { 8: '工作日历', 7: '家庭日历' }), 1);
+    eq('grp: 回填只碰该碰的那条', [store.get('S13').events.k2.calDisp, store.get('S13').events.k3.calDisp], ['工作日历', undefined]);
+    eq('grp: 没有需要补的就返回 0、不产生写入', store.tagSourceGroups('S13', { 8: '工作日历' }), 0);
+    win.Auth = { memberKey: () => 'sisDev', session: () => null }; // 下面一段测的是 sisDev 被移出的情形
   }
   {
     /* 被移出的人下次同步要收到通知，本机记录不能被「补回成员表」逻辑悄悄复活 */

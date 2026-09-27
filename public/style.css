@@ -38,6 +38,17 @@ html, body {
 /* 元素自带 display:grid/flex 时 hidden 属性会被盖掉，这里统一兜底 */
 [hidden] { display: none !important; }
 .screen { min-height: 100vh; min-height: 100dvh; }
+/* 屏幕切换的进场：底栏点「日历/设置」是横着推，从开屏页进出只是淡入推起。
+   只平移不缩放——周视图进入时要按 rect 量列宽把今天滑到第一格，缩放会污染量测 */
+@keyframes screenFromRight { from { opacity: 0; transform: translateX(26px); } }
+@keyframes screenFromLeft { from { opacity: 0; transform: translateX(-26px); } }
+@keyframes screenFade { from { opacity: 0; transform: translateY(12px); } }
+.screen.anim-from-right { animation: screenFromRight .26s cubic-bezier(.25,.8,.3,1); }
+.screen.anim-from-left { animation: screenFromLeft .26s cubic-bezier(.25,.8,.3,1); }
+.screen.anim-fade { animation: screenFade .26s ease; }
+/* 分段按钮/底栏药丸的选中态以前是瞬间换色，手指点下去没有「到位」的感觉 */
+.seg-btn { transition: background .18s, color .18s; }
+.tabbar .tab { transition: background .18s, color .18s; }
 
 /* ---------- 通用按钮/输入 ---------- */
 input, select {
@@ -64,10 +75,29 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .action-btn:active { transform: scale(.97); }
 .action-btn.primary { background: linear-gradient(135deg, #ff6a5e, #ef3f31); color: #fff; border-color: transparent; box-shadow: 0 4px 14px rgba(240,70,58,.3); font-weight: 600; }
 
-/* ---------- 起始屏（免登录） ---------- */
-#startScreen { display: flex; align-items: center; justify-content: center; padding: 24px; }
+/* ---------- 起始屏（免登录） ----------
+   内容比屏幕高（加了绑定邮箱组框、横屏又矮）时整屏要能滚。不能用 align-items:center：
+   卡片比视口高时它会把顶部顶出可视区且滚不回来。这里让卡片 margin:auto——
+   放得下时上下留白均分（等效居中），放不下时自动贴顶，安全。 */
+#startScreen { display: flex; justify-content: center; align-items: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 20px 16px calc(24px + var(--sa-bottom)); }
 .how { color: var(--text-weak); font-size: 12px; text-align: center; margin-top: 6px; line-height: 1.6; }
-.auth-card { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 28px 22px; box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.auth-card { width: 100%; max-width: 360px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 28px 22px; box-shadow: 0 6px 24px rgba(0,0,0,.08); margin: auto; }
+/* 两栏只在横屏用（见下面 landscape 段）：竖屏就是原来的单列顺序，别多出间距 */
+.auth-body { display: flex; flex-direction: column; }
+.auth-col { display: flex; flex-direction: column; min-width: 0; }
+/* 绑定邮箱是个「可选步骤」，做成组框才看得出来这几行是一件事，而不是散在卡片里的输入框 */
+/* 默认收起（details/summary）：竖屏那一页要一屏放得下两颗主按钮，
+   绑定邮箱是可选的一步，常驻整块表单太吃高度 */
+.auth-bind { border: 1.5px solid var(--line); border-radius: 16px; background: var(--tint); padding: 12px 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
+.auth-bind > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; user-select: none; font-size: 12px; font-weight: 700; letter-spacing: 1px; color: var(--text-weak); }
+.auth-bind > summary::-webkit-details-marker { display: none; }
+.auth-bind > summary span { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.auth-bind > summary::after { content: '⌄'; flex: 0 0 auto; margin-left: auto; font-size: 15px; line-height: 1; transition: transform .18s; }
+.auth-bind[open] > summary::after { transform: rotate(180deg); }
+.auth-bind-inner { display: flex; flex-direction: column; gap: 10px; }
+.auth-bind-body { display: flex; flex-direction: column; gap: 10px; }
+.auth-bind label { margin-bottom: 0; }
+.auth-bind .set-note { font-size: 11.5px; }
 .brand { text-align: center; margin-bottom: 18px; }
 .brand-logo { font-size: 44px; }
 .brand h1 { font-size: 24px; margin-top: 6px; }
@@ -157,14 +187,22 @@ html[data-theme="dark"] .big-btn { box-shadow: 0 4px 14px rgba(255,93,81,.22); }
 .calendar.month.collapsed { grid-auto-rows: minmax(48px, auto); }
 .calendar.month.collapsed .cell { display: none; }
 .calendar.month.collapsed .cell.keep { display: flex; }
-.month-toggle { display: flex; align-items: center; justify-content: center; margin: 4px auto 2px; width: 40px; height: 22px; line-height: 1; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--text-weak); font-size: 15px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+/* JS 收起/展开时把容器高度从旧值过渡到新值（.cell 是 display:none，瞬间切换像整块日历被抽掉）。
+   容器有固定高度，minmax(48px,1fr) 的行会跟着长回来，格子是一排排被拉开的 */
+.calendar.sizing { transition: height .28s cubic-bezier(.3,.8,.3,1); }
+.month-toggle { display: flex; align-items: center; justify-content: center; margin: 4px auto 2px; width: 40px; height: 22px; line-height: 1; border-radius: 11px; border: 1px solid var(--line); background: var(--card); color: var(--text-weak); font-size: 15px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,.08); transition: transform .28s cubic-bezier(.3,.8,.3,1); }
+.month-toggle.down { transform: rotate(180deg); }
 .month-toggle.hidden { display: none; }
 .cell { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 3px 2px 4px; display: flex; flex-direction: column; align-items: center; gap: 2px; overflow: hidden; cursor: pointer; }
 .cell:nth-child(7n) { border-right: none; }
 .cell.other { background: var(--cell-other); }
 .cell.other .date-num { color: var(--other-num); }
-.cell.sel { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 4px; }
+/* 选中一整格：底色铺满格子就够了。圈不能画在格子上（inset box-shadow）——
+   第一行/最左列那一圈会被 .calendar 的圆角 overflow:hidden 和格子自身的右边/下边框切断，
+   在手机上就是截图里那种「当天的红框断了几处」。要圈就圈在日期数字上，它四周是空的。 */
+.cell.sel { background: var(--accent-soft); }
 .date-num { font-size: 13px; font-weight: 500; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; border-radius: 50%; }
+.cell.sel:not(.today) .date-num { box-shadow: 0 0 0 1.5px var(--accent); }
 .cell.today .date-num { background: var(--accent); color: #fff; }
 .daymark { font-size: 10px; line-height: 1.35; padding: 0 4px; border-radius: 4px; }
 .daymark.work { background: var(--work-bg); color: var(--work-fg); }
@@ -413,6 +451,14 @@ input[type="file"] { padding: 14px; border: 1.5px dashed var(--tint-line); borde
 /* 标题不截省略号：居左、超出向右滑着看。列表和标题都不给滚动条留位置，只留手势 */
 .batch-t { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow-x: auto; text-align: left; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 .batch-t::-webkit-scrollbar { display: none; }
+/* 按日历分组：组头是自己的勾选框（整组选中），下面的日程行左缩进并换成卡片色，一眼看出从属 */
+.batch-group { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 13px; font-weight: 600; color: var(--text-weak); padding: 6px 12px 0; }
+.batch-group .batch-t { flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal .batch-row.sub { margin-left: 12px; background: var(--card); }
+.ig-cnt { flex: 0 0 auto; font-size: 12px; color: var(--text-weak); }
+/* 导入弹窗里的「按日历挑选」区：读到系统日程之后才出现 */
+.import-groups { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding: 12px 12px 14px; border: 1.5px solid var(--tint-line); border-radius: 14px; background: var(--tint); }
+.ig-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
 /* 全局 input 规则清了 appearance，复选框在深色卡片上就成了一块没有边界的深色，看不见；
    索性整个自己画：描边 + 勾选态填主色，对勾用 ::after 的边框转出来 */
 input[type=checkbox] { appearance: none; -webkit-appearance: none; position: relative; box-sizing: border-box; width: 20px; height: 20px; min-width: 20px; margin: 0; padding: 0; border: 1.5px solid color-mix(in srgb, var(--text-weak) 50%, transparent); border-radius: 6px; background: var(--card); cursor: pointer; flex: 0 0 auto; }
@@ -438,6 +484,22 @@ textarea:focus { border-color: var(--accent); background: var(--field-bg); box-s
 /* ---------- 横屏（矮屏）：整体压缩，让月视图与时间轴不用反复滚动 ---------- */
 @media (orientation: landscape) and (max-height: 620px) {
   :root { --hour-h: 30px; }
+  /* 起始屏：竖着排一列在矮屏上放不下（昵称+颜色+两个大按钮+绑定邮箱组框），
+     改成左右两栏、品牌区压小，一屏能看全就不必滚动着找按钮了 */
+  #startScreen { padding: 10px 14px calc(16px + var(--sa-bottom)); }
+  .auth-card { max-width: 640px; padding: 14px 18px; }
+  .brand { margin-bottom: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .brand-logo { font-size: 22px; }
+  .brand h1 { font-size: 18px; margin-top: 0; }
+  .brand p { font-size: 12px; margin-top: 0; }
+  .auth-body { flex-direction: row; gap: 18px; align-items: flex-start; }
+  .auth-col { flex: 1 1 0; }
+  .auth-card label { margin-bottom: 8px; }
+  .auth-card input { padding: 8px 12px; font-size: 14px; }
+  .auth-card .big-btn { padding: 8px; font-size: 14px; border-radius: 12px; margin-bottom: 8px; }
+  .auth-bind { padding: 9px 11px; gap: 7px; }
+  .auth-bind .set-note { font-size: 11px; line-height: 1.5; }
+  .how, .auth-hint { margin-top: 4px; }
   .topbar { padding: calc(6px + var(--sa-top)) 14px 4px; }
   #monthTitle { font-size: 18px; }
   .today-btn { padding: 3px 11px; font-size: 12px; }
@@ -481,3 +543,10 @@ textarea:focus { border-color: var(--accent); background: var(--field-bg); box-s
   .modal { max-height: 94vh; padding-bottom: calc(14px + var(--sa-bottom)); }
 }
 
+
+/* 系统开了「减少动态效果」就全不播：动效是修饰，不该变成负担 */
+@media (prefers-reduced-motion: reduce) {
+  .screen.anim-from-right, .screen.anim-from-left, .screen.anim-fade,
+  .modal-mask, .modal { animation: none; }
+  .calendar.sizing, .month-toggle, .seg-btn, .tabbar .tab, .auth-bind > summary::after { transition: none; }
+}

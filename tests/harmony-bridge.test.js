@@ -161,6 +161,11 @@ const ok = (name, cond) => eq(name, !!cond, true);
   ok('cal: 写回原日历走 calEdit', await CalBridge.editSystemEvent(evs[0], 1e12));
   eq('cal: calEdit 收到条目编号与原日历', [editCalls[0].evId, editCalls[0].calDisp], ['11', '华为日历']);
   eq('cal: 自建的日程不写回系统日历', await CalBridge.editSystemEvent({ title: 'x', date: '2026-09-22' }, 0), false);
+  /* 按分组导入（app.js 只把选中那几组交给 addEvents）：分组名要跟着日程存进空间文档，
+     事后批量管理才按得回「整个日历」一组 */
+  Store.addEvents('ABCD1234', [evs[0]], 'me');
+  const imp = Object.values(Store.get('ABCD1234').events).find((e) => e.sourceUid === 'hos:11');
+  eq('cal: 导入的日程保留分组（日历名 + 账户）', [imp.calDisp, imp.calAcct], ['华为日历', 'huawei@cloud.com']);
 
   /* ---------- 5. 同步状态机：干净时也要拉取远端（新成员/新日程能显示） ---------- */
   const s5 = Store.createSpace('SYNC5', '五人房');
