@@ -195,11 +195,6 @@ function showScreen(name){
   $('#tabbar').classList.toggle('hidden', name==='startScreen');
   $('#tabRoom').classList.toggle('active', name==='calendarScreen');
   $('#tabSettings').classList.toggle('active', name==='settingsScreen');
-  /* 桌面端左侧栏：开屏页不收栏，日历/设置按钮跟随高亮；空间列表随时重画（成本只是本地数据） */
-  document.body.classList.toggle('on-start', name==='startScreen');
-  $('#railCalendar').classList.toggle('active', name==='calendarScreen');
-  $('#railSettings').classList.toggle('active', name==='settingsScreen');
-  renderRail();
 }
 $('#tabRoom').onclick=()=>{ if(state.code && Store.get(state.code)) showScreen('calendarScreen'); else initStart(); };
 $('#tabSettings').onclick=openSettings;
