@@ -22,20 +22,49 @@
         <h1>Reunion</h1>
         <p>多人共享 · 坚果云同步 · 无需注册</p>
       </div>
-      <label>我的昵称
-        <input type="text" id="myName" placeholder="例如 小明" />
-      </label>
-      <label>我的标签颜色
-        <div class="color-picker" id="myColorPicker"></div>
-      </label>
-      <button class="big-btn" id="createBtn">＋ 创建共享空间</button>
-      <button class="big-btn ghost" id="joinBtn">🔑 用邀请码加入</button>
-      <div id="lastSpaceBox" class="hidden">
-        <button class="big-btn ghost" id="enterLastBtn">↩ 进入上次的空间</button>
+      <div class="auth-body">
+        <div class="auth-col">
+          <label>我的昵称
+            <input type="text" id="myName" placeholder="例如 小明" />
+          </label>
+          <label>我的标签颜色
+            <div class="color-picker" id="myColorPicker"></div>
+          </label>
+          <button class="big-btn" id="createBtn">＋ 创建共享空间</button>
+          <button class="big-btn ghost" id="joinBtn">🔑 用邀请码加入</button>
+          <div id="lastSpaceBox" class="hidden">
+            <button class="big-btn ghost" id="enterLastBtn">↩ 进入上次的空间</button>
+          </div>
+        </div>
+        <div class="auth-col">
+          <!-- 绑定邮箱做成一个组框：可选步骤，一眼能看出「这几行是一件事」，
+               并且和设置-账户用的是同一套控件（app.js mountBindFlow）。
+               默认收起：手机竖屏那一整页要能一屏放下两颗主按钮，展开率极低的一步不该常驻占高 -->
+          <details class="auth-bind" id="authBind">
+            <summary><span id="bindHead">📧 绑定邮箱（可选）</span></summary>
+            <div class="auth-bind-inner">
+              <div id="bindLoggedOut" class="auth-bind-body">
+                <label class="set-field">邮箱
+                  <input type="email" id="bindEmail" placeholder="you@example.com" autocomplete="email" />
+                </label>
+                <button class="big-btn ghost" id="bindSendBtn">📧 发送验证码</button>
+                <label class="set-field hidden" id="bindCodeWrap">验证码
+                  <input type="text" id="bindCode" inputmode="numeric" maxlength="8" placeholder="邮箱里的数字验证码" />
+                </label>
+                <button class="big-btn hidden" id="bindVerifyBtn">✔ 验证并绑定</button>
+                <p class="set-note">绑定后换手机登录同一个邮箱，昵称和该邮箱加入过的空间会自动并成一个用户。不绑定也完全可用（按本机身份）。</p>
+              </div>
+              <div id="bindLoggedIn" class="hidden">
+                <div class="set-row"><span>✉️ 已绑定</span><span class="set-val" id="bindEmailShow"></span></div>
+                <button class="big-btn ghost" id="bindLogoutBtn">退出登录</button>
+              </div>
+            </div>
+          </details>
+          <p class="auth-hint" id="startHint"></p>
+          <p class="how">创建后会得到 8 位邀请码，发给朋友即可一起用。</p>
+          <button class="big-btn ghost" id="davBtn">⚙ 设置（网盘 / 配置码 / 资料）</button>
+        </div>
       </div>
-      <p class="auth-hint" id="startHint"></p>
-      <p class="how">创建后会得到 8 位邀请码，发给朋友即可一起用。</p>
-      <button class="big-btn ghost" id="davBtn">⚙ 设置（网盘 / 配置码 / 资料）</button>
     </div>
   </section>
 
@@ -160,6 +189,7 @@
       <div class="set-group">
         <div class="set-title">空间管理</div>
         <div id="spaceMgmtList" class="space-list"></div>
+        <p class="set-note">「退出」= 在云端成员表里记下你已退出，并把本机这份副本清掉（重新输邀请码还能回来）；「解散」是创建者的退出，其他成员下次进入时会看到「空间已被创建者解散」。<b>空间里一个人都不剩时，网盘上这份数据会被一并删除。</b></p>
         <button class="big-btn ghost" id="scanSpacesBtn">🔍 扫描网盘，找回我加入过的空间</button>
         <div class="set-row"><span>当前空间名称</span><span class="set-val" id="curSpaceName">—</span></div>
         <button class="big-btn ghost hidden" id="renameBtn">✏️ 重命名当前空间</button>
@@ -269,19 +299,6 @@
     </div>
   </div>
 
-  <!-- ============ 清空云端数据 ============ -->
-  <div class="modal-mask" id="clearModal" hidden>
-    <div class="modal">
-      <h3>⚠️ 清空云端数据</h3>
-      <p class="import-tip">将删除网盘上「<b id="clearSpaceName"></b>」的空间文件，此操作不可恢复！其他成员将读不到这份数据。若不勾选下方选项，本机数据保留，且下次同步时会以本机数据在云端重建。</p>
-      <label class="checkbox"><input type="checkbox" id="clearAlsoLocal" />同时清空本机该空间数据</label>
-      <div class="modal-actions">
-        <button id="clearCancel" class="action-btn">取消</button>
-        <button id="clearOk" class="action-btn primary">确认清空</button>
-      </div>
-    </div>
-  </div>
-
   <!-- ============ 空间成员管理 ============ -->
   <div class="modal-mask" id="memberModal" hidden>
     <div class="modal">
@@ -294,7 +311,7 @@
     </div>
   </div>
 
-  <!-- ============ 退出空间 / 移出成员（同一个弹层，两种语气） ============ -->
+  <!-- ============ 退出空间 / 解散空间 / 移出成员（同一个弹层，三种语气） ============ -->
   <div class="modal-mask" id="leaveModal" hidden>
     <div class="modal">
       <h3 id="leaveTitle">退出空间</h3>
@@ -451,10 +468,20 @@
   <div class="modal-mask" id="importModal" hidden>
     <div class="modal">
       <h3>系统日历导入 / 回写</h3>
-      <button class="big-btn ghost" id="sysImportBtn">📥 直接读取系统日历并导入</button>
+      <button class="big-btn ghost" id="sysImportBtn">📥 读取系统日历（按日历分组挑选）</button>
       <!-- 鸿蒙的 READ_CALENDAR 只放行「本应用创建的日程」，读别人建的日程要系统级 READ_WHOLE_CALENDAR，
            三方应用拿不到；这里如实说明并把 .ics 路径递给用户，免得反复点按钮猜原因 -->
       <p class="import-tip" id="harCalTip" hidden>鸿蒙限制：应用只能读到本应用写入的日程，你在系统日历里手动建的那些读不到。可用下面「从 .ics 文件导入」搬进来。</p>
+      <!-- 读到日程之后才出现：一个日历一组，勾哪几组就只导哪几组 -->
+      <div class="import-groups hidden" id="importGroups">
+        <div class="ig-head">
+          <span class="set-sub">选择要导入的日历</span>
+          <label class="set-inline" for="igAll"><span>全选</span><input type="checkbox" id="igAll"></label>
+        </div>
+        <div class="batch-list" id="igList"></div>
+        <p class="import-tip" id="igNote"></p>
+        <button class="big-btn" id="importSysSave">📥 导入所选日历</button>
+      </div>
       <button class="big-btn ghost" id="writeBackBtn">📤 把空间日程回写到系统日历</button>
       <button class="big-btn ghost warn hidden" id="permBtn">⚠️ 日历权限未开启，点击去系统设置</button>
       <details class="export-help">

@@ -5,6 +5,7 @@
   const listeners = [];
   const goneListeners = []; // 云端空间被创建者删除时的回调
   const kickedListeners = []; // 自己被空间管理员移出时的回调
+  const dissolvedListeners = []; // 创建者解散了空间时的回调
   const cache = {}; // code -> { data, etag, dirty, seeds, syncing }
 
   function localKey(code) { return 'tm:space:' + code; }
@@ -73,6 +74,8 @@
     out.name = (rn >= ln && remote.name) ? remote.name : (local.name || remote.name);
     out.nameUpdatedAt = Math.max(ln, rn);
     out.createdBy = remote.createdBy || local.createdBy;
+    /* 解散标记一旦写上就不再消失：合并时必须带下去，否则别人补一次成员就把已解散的空间复活了 */
+    out.dissolved = remote.dissolved || local.dissolved || null;
     for (const src of [remote, local]) {
       for (const id in src.members) {
         if (!(id in out.members) || newer(src.members[id], out.members[id])) out.members[id] = src.members[id];
@@ -280,18 +283,25 @@
           c.etag = r.etag || null;
           if (window.Dav && Dav.autoBind) Dav.autoBind(code); // 第一次同步成功就把网盘账号钉在这个空间上
           rememberMembers(c, c.data);
-          restoreMembers(c, c.data);
-          ensureSelf(code, c);
-          if (foldMembers(code, c.data)) c.dirty = true;
+          /* 已解散 / 已经没人在里面的空间只用来发通知，绝不再往里补人：
+             一边告诉别人「这个空间散了」一边把自己补回成员表，0 人自动删除就永远等不到 */
+          const dead = !!c.data.dissolved || !liveCount(c.data);
+          if (!dead) {
+            restoreMembers(c, c.data);
+            ensureSelf(code, c);
+            if (foldMembers(code, c.data)) c.dirty = true;
+            /* 合并结果比云端多成员 = 有人（包括自己）被旧版覆盖挤掉了，得把名单推回去；
+               只补本机不写回的话，云端会一直缺人，别人看到的还是旧人数 */
+            if (Object.keys(c.data.members).some((id) => remoteMembers.indexOf(id) < 0)) c.dirty = true;
+          }
           /* 被管理员移出：成员表里自己那条带着别人写的 out 标记。
              本机不做任何静默删除——交给界面问用户要不要移除本机副本 */
           const meKey = resolveId(c.data, myId());
           const myRec = c.data.members[meKey];
           const kicked = myRec && myRec.out && myRec.outBy !== meKey ? myRec.out : 0;
           if (kicked !== c.kicked) { c.kicked = kicked; if (kicked) kickedListeners.forEach((fn) => fn(code)); }
-          /* 合并结果比云端多成员 = 有人（包括自己）被旧版覆盖挤掉了，得把名单推回去；
-             只补本机不写回的话，云端会一直缺人，别人看到的还是旧人数 */
-          if (Object.keys(c.data.members).some((id) => remoteMembers.indexOf(id) < 0)) c.dirty = true;
+          const dis = c.data.dissolved ? (c.data.dissolved.at || 1) : 0;
+          if (dis !== c.dissolvedSeen) { c.dissolvedSeen = dis; if (dis) dissolvedListeners.forEach((fn) => fn(code)); }
         } else if (r.status === 404) {
           /* 云端文档不见了。要连续两轮（且本机没有待写入的改动）才判定「被创建者删除」——
              换网盘账号、改了目录、服务端抖动都会瞬时 404，第一轮就删本机副本太危险 */
@@ -409,6 +419,30 @@
     m.out = Date.now(); m.outBy = by; m.updatedAt = Date.now(); m.by = by;
     return true;
   }
+  /* 把某个成员名下的日程全部打墓碑（退出/被移出/解散时问一句「要不要连日程一起删」） */
+  function dropEventsOf(dd, who) {
+    Object.keys(dd.events).forEach((id) => {
+      const e = dd.events[id];
+      if (resolveId(dd, e.ownerId) !== who) return;
+      dd.deletions[id] = Math.max(Date.now(), (e.updatedAt || 0) + 1);
+      delete dd.events[id];
+    });
+  }
+  /* 还"活着"的成员：出过（自己退出或被别人移出）的只留名片，不再算人数。
+     只剩 0 个人的空间就该整个删掉，这个数是那条规则的入口 */
+  function liveCount(d) {
+    if (!d || !d.members) return 0;
+    return Object.keys(d.members).filter((id) => !d.members[id].out).length;
+  }
+  /* 只剩 0 个成员（全部已退出/被移出，或创建者已解散）就把网盘上这份文档删掉。
+     删除由「最后确认离开的那台设备」执行：它已经把 out 标记写进云端，
+     删失败（没有网盘写权限、离线）就留着，谁再走到这条路径还会再试一次 */
+  async function purgeIfEmpty(code) {
+    const c = loadLocal(code);
+    if (!c.data || liveCount(c.data) > 0) return false;
+    try { await Dav.remove(code); } catch (e) { console.warn('purge empty space:', e.message); return false; }
+    return true;
+  }
   /* 谁退出了、谁被移出了，在别人眼里该提几次？规则按「TA 的日程还在不在」分两种：
      - 日程已清空：第一次画一行「已退出/已被移出」，第二次只弹一句提示（连人带行一起消失），第三次起彻底安静
      - 日程还留着：一直正常显示（日历上那些色块总得说清是谁写的），但绝不弹提示——以后 TA 那边再怎么动，
@@ -447,6 +481,8 @@
   function ensureMember(code) {
     const c = loadLocal(code);
     if (!c.data) return false;
+    /* 已解散的空间不再收人：把人补回成员表等于把「0 人」复活，那份数据就永远删不掉了 */
+    if (c.data.dissolved) return false;
     const id = resolveId(c.data, myId());
     const cur = c.data.members[id];
     if (cur && !cur.out) return false;
@@ -740,14 +776,7 @@
       mutate(code, (dd) => {
         const tgt = resolveId(dd, t);
         markOut(dd, tgt, resolveId(dd, myId()));
-        if (opts && opts.dropMine) {
-          Object.keys(dd.events).forEach((eid) => {
-            const e = dd.events[eid];
-            if (resolveId(dd, e.ownerId) !== tgt) return;
-            dd.deletions[eid] = Math.max(Date.now(), (e.updatedAt || 0) + 1);
-            delete dd.events[eid];
-          });
-        }
+        if (opts && opts.dropMine) dropEventsOf(dd, tgt);
       });
       return true;
     },
@@ -776,28 +805,58 @@
       return true;
     },
     /* 退出空间：在云端成员表里把自己标记为已退出（可选把自己名下的日程一起打墓碑），
-       本机副本要等云端写成功之后再清，否则离线退出等于这件事从没发生过 */
+       本机副本要等云端写成功之后再清，否则离线退出等于这件事从没发生过。
+       退出后如果这个空间已经一个人都不剩，网盘上那份文档会被顺手删掉（见 purgeIfEmpty） */
     async leave(code, opts) {
       const c = loadLocal(code);
       const d = c.data;
       if (!d) return false;
       const me = resolveId(d, myId());
-      if (roleOf(d, me) === 'creator') return false; // 创建者该走「清空云端」，空间不能没有主人
+      if (roleOf(d, me) === 'creator') return false; // 创建者该走「解散」，空间不能没有主人
       mutate(code, (dd) => {
         markOut(dd, me, me);
-        if (opts && opts.dropMine) {
-          Object.keys(dd.events).forEach((id) => {
-            const e = dd.events[id];
-            if (resolveId(dd, e.ownerId) !== me) return;
-            dd.deletions[id] = Math.max(Date.now(), (e.updatedAt || 0) + 1);
-            delete dd.events[id];
-          });
-        }
+        if (opts && opts.dropMine) dropEventsOf(dd, me);
       });
       await syncCode(code);
       if (c.dirty) throw new Error('网盘没连上，云端还不知道你退出了——请联网后重试');
-      return true;
+      return { purged: await purgeIfEmpty(code) };
     },
+    /* 解散空间（仅创建者）：在云端文档上写 dissolved 标记并让自己退出，
+       数据先原样留着——其他成员要靠这份文档读到「空间已被创建者解散」的告知，
+       各自确认退出、最后一个人再把文档整个删掉（见 purgeIfEmpty） */
+    async dissolve(code, opts) {
+      const c = loadLocal(code);
+      const d = c.data;
+      if (!d) return false;
+      const me = resolveId(d, myId());
+      if (roleOf(d, me) !== 'creator') return false;
+      mutate(code, (dd) => {
+        dd.dissolved = { at: Date.now(), by: me };
+        markOut(dd, me, me);
+        if (opts && opts.dropMine) dropEventsOf(dd, me);
+      });
+      await syncCode(code);
+      if (c.dirty) throw new Error('网盘没连上，云端还不知道这个空间已解散——请联网后重试');
+      return { purged: await purgeIfEmpty(code) };
+    },
+    /* 只剩 0 个成员就把网盘上这份文档删掉（实现见模块级 purgeIfEmpty） */
+    purgeIfEmpty,
+    isDissolved(code) {
+      const d = loadLocal(code).data;
+      return !!(d && d.dissolved);
+    },
+    /* 看完「空间已被创建者解散」的告知之后的收尾：把自己也算成已退出（这样云端的人数能归零），
+       再把这份再没人要的数据删掉。网盘没连上就只清本机副本，云端那份留给下一个在线的成员删 */
+    async acknowledgeDissolve(code) {
+      const c = loadLocal(code);
+      if (!c.data) return false;
+      const me = resolveId(c.data, myId());
+      mutate(code, (dd) => { markOut(dd, me, me); });
+      await syncCode(code);
+      if (c.dirty) return false;
+      return await purgeIfEmpty(code);
+    },
+    liveCount(code) { return liveCount(loadLocal(code).data); },
     /* 拿着配置码进来的人＝和创建者共用同一台网盘账号：自己给自己记一笔管理员。
        不等 davId 比对（换设备、清过数据时本机算出的哈希可能对不上），也不额外弹层问人。
        创建者收走过的资格，配置码给不回来——管理员这件事最终以创建者为准 */
@@ -818,6 +877,28 @@
       return !!(m && m.out && m.outBy && m.outBy !== me);
     },
     onKicked: (fn) => kickedListeners.push(fn),
+    onDissolved: (fn) => dissolvedListeners.push(fn),
+    /* 早期导入系统日历时只把日历 id 写进了 sourceUid、没存名字：
+       读系统日历既然能拿到 id→名字，就顺手补到这些日程上，按分组管理时它们不会挤进「未命名日历」一组 */
+    tagSourceGroups(code, map) {
+      const d = loadLocal(code).data;
+      if (!d || !map) return 0;
+      const hit = [];
+      Object.keys(d.events).forEach((id) => {
+        const e = d.events[id];
+        const m = /^cal:(\d+):/.exec(e.sourceUid || '');
+        if (m && map[m[1]] && e.calDisp !== map[m[1]]) hit.push([id, map[m[1]]]);
+      });
+      if (!hit.length) return 0;
+      mutate(code, (dd) => {
+        hit.forEach(([id, name]) => {
+          if (!dd.events[id]) return;
+          dd.events[id].calDisp = name;
+          dd.events[id].updatedAt = Math.max(Date.now(), (dd.events[id].updatedAt || 0) + 1);
+        });
+      });
+      return hit.length;
+    },
   };
   window.Store = api;
 })();

@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.5.0';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）
@@ -189,9 +189,21 @@ function ask({title,text,options,input}){
   });
 }
 
+const SCREENS=['startScreen','calendarScreen','settingsScreen'];
+/* 屏幕切换原本只是 hidden 一来一回，硬跳；补一段方向感知的进场。
+   只做平移+淡入，别用缩放：周视图进场时要按 getBoundingClientRect 量列宽，缩放会把量测带偏 */
 function showScreen(name){
-  ['startScreen','calendarScreen','settingsScreen'].forEach(s=>$('#'+s).classList.add('hidden'));
-  $('#'+name).classList.remove('hidden');
+  const cur=document.querySelector('.screen:not(.hidden)');
+  SCREENS.forEach(s=>$('#'+s).classList.add('hidden'));
+  const next=$('#'+name);
+  next.classList.remove('hidden');
+  if(next!==cur){
+    const anim = !cur || cur.id==='startScreen' || name==='startScreen' ? 'fade'
+      : (SCREENS.indexOf(name)>SCREENS.indexOf(cur.id) ? 'from-right' : 'from-left');
+    next.classList.remove('anim-fade','anim-from-right','anim-from-left');
+    void next.offsetWidth; // 重开同一块屏时动画要能重放
+    next.classList.add('anim-'+anim);
+  }
   $('#tabbar').classList.toggle('hidden', name==='startScreen');
   $('#tabRoom').classList.toggle('active', name==='calendarScreen');
   $('#tabSettings').classList.toggle('active', name==='settingsScreen');
@@ -302,6 +314,7 @@ function onNameInput(e){
 function initStart(){
   stopPolling();
   refreshProfile();
+  renderAccountSection();
   const last = localStorage.getItem('tm:lastSpace');
   $('#lastSpaceBox').classList.toggle('hidden', !last);
   $('#startHint').textContent = (Dav.cfg() && Dav.cfg().user) ? '' : '第一步：进入设置，配置坚果云 WebDAV 或粘贴家人的配置码';
@@ -339,81 +352,101 @@ $('#davTest').onclick=async()=>{
   catch(e){ toast(e.message); }
 };
 
-/* ---------- 账户（登录即用，Supabase 配置已内置） ---------- */
-function renderAccountSection(){
-  const s = Auth.session();
-  $('#acctLoggedOut').classList.toggle('hidden', !!s);
-  $('#acctLoggedIn').classList.toggle('hidden', !s);
-  if(s) $('#acctEmail').textContent = s.email||'已登录';
-  else { $('#otpCodeWrap').classList.add('hidden'); $('#otpVerifyBtn').classList.add('hidden'); $('#otpCode').value=''; }
-}
+/* ---------- 账户（登录即用，Supabase 配置已内置） ----------
+   绑定邮箱有两个入口：起始屏的「绑定邮箱」组框、设置-账户。控件一模一样但 id 不能重复，
+   所以做成一个工厂、各传自己那组元素；绑定后的收尾（并身份、扫网盘找回空间、问账户名称）
+   两条路走同一份代码，免得改一处漏一处 */
 const OTP_RESEND_SEC=90;
 const OTP_SEND_LABEL='📧 发送验证码';
-let otpTimer=null;
-function startOtpCountdown(btn){
-  clearInterval(otpTimer);
-  let left=OTP_RESEND_SEC;
-  btn.disabled=true; btn.textContent=`📧 重新发送（${left}s）`;
-  otpTimer=setInterval(()=>{
-    left--;
-    if(left<=0){ clearInterval(otpTimer); otpTimer=null; btn.disabled=false; btn.textContent=OTP_SEND_LABEL; }
-    else btn.textContent=`📧 重新发送（${left}s）`;
-  },1000);
-}
-$('#otpSendBtn').onclick=async()=>{
-  const btn=$('#otpSendBtn');
-  if(btn.disabled) return;
-  const email=$('#loginEmail').value.trim();
-  btn.disabled=true;
-  try{
-    await Auth.sendOtp(email);
-    $('#otpCodeWrap').classList.remove('hidden'); $('#otpVerifyBtn').classList.remove('hidden');
-    $('#otpCode').focus();
-    toast('验证码已发到邮箱，请查收');
-    startOtpCountdown(btn);
-  }catch(e){ toast(e.message); btn.disabled=false; }
-};
-$('#otpVerifyBtn').onclick=async()=>{
-  const btn=$('#otpVerifyBtn'); btn.disabled=true;
-  try{
-    const oldKey=myId();
-    await Auth.verifyOtp($('#loginEmail').value, $('#otpCode').value);
-    const newKey=myId();
-    const localName=App.me.name;
-    const mig = newKey!==oldKey ? Store.migrateIdentity(oldKey,newKey) : { conflicts:[] }; // 邮箱绑定到当前本地身份，而不是另建账户
-    toast('登录成功，已将本机身份绑定到此邮箱');
-    /* 同一邮箱在别的设备上可能已经加过空间：本机空间列表只是本地记录，
-       扫一遍已知网盘账号的成员表，把这个账户在里面的空间一并补回来 */
-    let found={added:[],nick:''};
-    try{ found = await Store.followAccount(newKey); }catch(e){ console.warn('follow account:',e.message); }
-    /* 两边昵称不一样时不自动挑：合并成一个用户要问账户名称 */
-    const theirs = found.nick || (mig.conflicts[0]||{}).theirs;
-    if(theirs && theirs!==localName){
-      const pick=await ask({
-        title:'这个邮箱在别的设备上叫「'+theirs+'」',
-        text:'本机身份要和它合并成一个用户（同一个人的日程归到一条）。选一个显示名称，成员标签和日程归属都会用它。',
-        options:[{v:'mine',t:'用本机现在的：'+localName},{v:'theirs',t:'用账户已有的：'+theirs}],
-        input:{placeholder:'或输入一个新的账户名称'},
-      });
-      const name = pick==='mine' ? localName : pick==='theirs' ? theirs : ((pick&&pick.text)||localName);
-      if(name && name!==App.me.name) Store.setMyName(name);
+const bindFlows=[];
+function mountBindFlow(ids){
+  const el=(k)=>document.getElementById(ids[k]);
+  let timer=null;
+  const flow={ render(){
+    const s=Auth.session();
+    el('out').classList.toggle('hidden', !!s);
+    el('in').classList.toggle('hidden', !s);
+    if(s) el('shown').textContent=s.email||'已登录';
+    else { el('codeWrap').classList.add('hidden'); el('verify').classList.add('hidden'); el('code').value=''; }
+    /* 组框收起时也要一眼看得出绑没绑，别让人为了确认状态去点开它 */
+    const head=el('head');
+    if(head) head.textContent = s ? `✉️ 已绑定 ${s.email||''}` : '📧 绑定邮箱（可选）';
+  }};
+  el('send').onclick=async()=>{
+    const btn=el('send');
+    if(btn.disabled) return;
+    const email=el('email').value.trim();
+    btn.disabled=true;
+    try{
+      await Auth.sendOtp(email);
+      el('codeWrap').classList.remove('hidden'); el('verify').classList.remove('hidden');
+      el('code').focus();
+      toast('验证码已发到邮箱，请查收');
+      clearInterval(timer);
+      let left=OTP_RESEND_SEC;
+      btn.textContent=`📧 重新发送（${left}s）`;
+      timer=setInterval(()=>{
+        left--;
+        if(left<=0){ clearInterval(timer); timer=null; btn.disabled=false; btn.textContent=OTP_SEND_LABEL; }
+        else btn.textContent=`📧 重新发送（${left}s）`;
+      },1000);
+    }catch(e){ toast(e.message); btn.disabled=false; }
+  };
+  el('verify').onclick=async()=>{
+    const btn=el('verify'); btn.disabled=true;
+    try{
+      await finishBind(myId(), el('email').value, el('code').value);
+      flow.render();
+      const box=el('box'); if(box) box.open=false; // 绑完收回一行，状态写在标题上
     }
-    renderAccountSection(); renderSpaceMgmt();
-    if(found.added && found.added.length) toast('已补回该邮箱加入的 '+found.added.length+' 个空间');
-    if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
-    Store.scheduleSync();
-  }catch(e){ toast(e.message); }
-  finally{ btn.disabled=false; }
-};
-/* 退出登录只改本机身份，不动云端成员记录：
-   别的设备可能正用这个邮箱写日程，把 u:邮箱 改名回本机设备号等于把别人的成员条目抢过来，
-   表现就是「同一个账号又显示成两个」。已写下的日程靠本机历史身份键照样认作自己的。 */
-$('#logoutBtn').onclick=()=>{
-  Auth.clear();
-  renderAccountSection();
-  toast('已退出，回到本机身份（此前的日程仍归在这个邮箱名下）');
-  if(state.code && Store.get(state.code)){ renderPeopleTags(); renderCalendar(); }
-};
+    catch(e){ toast(e.message); }
+    finally{ btn.disabled=false; }
+  };
+  /* 退出登录只改本机身份，不动云端成员记录：
+     别的设备可能正用这个邮箱写日程，把 u:邮箱 改名回本机设备号等于把别人的成员条目抢过来，
+     表现就是「同一个账号又显示成两个」。已写下的日程靠本机历史身份键照样认作自己的。 */
+  el('logout').onclick=()=>{
+    Auth.clear();
+    flow.render();
+    toast('已退出，回到本机身份（此前的日程仍归在这个邮箱名下）');
+    if(state.code && Store.get(state.code)){ renderPeopleTags(); renderCalendar(); }
+  };
+  bindFlows.push(flow);
+  return flow;
+}
+function renderAccountSection(){ bindFlows.forEach((f)=>f.render()); }
+/* 绑定成功之后顺手把网盘扫一遍：这个邮箱在别的设备上加入过的空间要自动补回来，
+   而不是等用户再去设置页手动点「扫描网盘」（补回来的结果必须说一句，不然看不出扫过了） */
+async function finishBind(oldKey, email, code){
+  await Auth.verifyOtp(email, code);
+  const newKey=myId();
+  const localName=App.me.name;
+  const mig = newKey!==oldKey ? Store.migrateIdentity(oldKey,newKey) : { conflicts:[] }; // 邮箱绑定到当前本地身份，而不是另建账户
+  let found={added:[],nick:'',scanned:0};
+  try{ found = await Store.followAccount(newKey); }catch(e){ console.warn('follow account:',e.message); }
+  /* 两边昵称不一样时不自动挑：合并成一个用户要问账户名称 */
+  const theirs = found.nick || (mig.conflicts[0]||{}).theirs;
+  if(theirs && theirs!==localName){
+    const pick=await ask({
+      title:'这个邮箱在别的设备上叫「'+theirs+'」',
+      text:'本机身份要和它合并成一个用户（同一个人的日程归到一条）。选一个显示名称，成员标签和日程归属都会用它。',
+      options:[{v:'mine',t:'用本机现在的：'+localName},{v:'theirs',t:'用账户已有的：'+theirs}],
+      input:{placeholder:'或输入一个新的账户名称'},
+    });
+    const name = pick==='mine' ? localName : pick==='theirs' ? theirs : ((pick&&pick.text)||localName);
+    if(name && name!==App.me.name) Store.setMyName(name);
+  }
+  renderAccountSection(); renderSpaceMgmt();
+  toast(found.added.length ? '绑定成功，已自动补回该邮箱加入的 '+found.added.length+' 个空间'
+    : '绑定成功'+(found.scanned ? '：网盘里翻了 '+found.scanned+' 份文件，这个邮箱还没加入过别的空间' : ''));
+  if(state.code && Store.get(state.code)){ Store.setProfile(state.code); renderPeopleTags(); renderCalendar(); }
+  Store.scheduleSync();
+}
+mountBindFlow({ out:'acctLoggedOut', in:'acctLoggedIn', email:'loginEmail', send:'otpSendBtn',
+  codeWrap:'otpCodeWrap', code:'otpCode', verify:'otpVerifyBtn', shown:'acctEmail', logout:'logoutBtn' });
+mountBindFlow({ out:'bindLoggedOut', in:'bindLoggedIn', email:'bindEmail', send:'bindSendBtn',
+  codeWrap:'bindCodeWrap', code:'bindCode', verify:'bindVerifyBtn', shown:'bindEmailShow', logout:'bindLogoutBtn',
+  head:'bindHead', box:'authBind' });
 /* 空间列表丢了（换机、清数据、只用过配置码）：按成员表把网盘上属于我的空间找回来 */
 $('#scanSpacesBtn').onclick=async()=>{
   const btn=$('#scanSpacesBtn');
@@ -532,6 +565,8 @@ async function joinSpace(code){
   /* 加入不再自己 PUT 整篇文档：先合并进本机缓存，写回交给 syncCode（它在覆盖前会重新拉全量合并），
      否则后来的人会把前一个人刚写进去的成员/日程一起盖掉 */
   const { data, etag } = await Store.openRemote(code);
+  /* 已经解散的空间不该再往里补人：它只是在等最后一个成员把文档删掉 */
+  if (data.dissolved) throw new Error('这个空间已经被创建者解散了，请让对方新建空间后再发邀请码');
   await Store.attach(code, data, etag);
   const isNew = Store.ensureMember(code); // 已在成员表里就不产生额外写入
   Store.upsertSpaceMeta(code, (Store.get(code) || data).name || '共享空间');
@@ -568,25 +603,19 @@ function spaceItems(listEl, onClick){
     mb.onclick=(ev2)=>{ ev2.stopPropagation(); openMemberModal(s.code); };
     btns.appendChild(mb);
     if(!onClick){
-      const am=Store.isManager(s.code), role=Store.role(s.code);
-      if(am){
-        const clr=document.createElement('button'); clr.className='si-btn'; clr.textContent='☁ 清空'; clr.title='清空该空间在网盘上的数据';
-        clr.onclick=(ev2)=>{ ev2.stopPropagation(); openClearModal(s.code, s.name||s.code); };
-        btns.appendChild(clr);
-      }
-      if(data && role!=='creator'){
-        const lv=document.createElement('button'); lv.className='si-btn'; lv.textContent='退出'; lv.title='退出该空间';
-        lv.onclick=(ev2)=>{ ev2.stopPropagation(); openLeaveModal(s.code); };
-        btns.appendChild(lv);
-      }
-      const out=document.createElement('button'); out.className='si-btn danger'; out.textContent='移除';
-      out.onclick=async(ev2)=>{
+      /* 「清空」「移除」两个按钮合成一颗：普通成员点「退出」（云端打个已退出标记 + 清本机副本），
+         创建者点「解散」（在云端写下解散标记，其他成员下次进入时看到告知后各自退出） */
+      const btn=document.createElement('button');
+      btn.className='si-btn danger';
+      btn.onclick=(ev2)=>{
         ev2.stopPropagation();
-        if(!await uiConfirm('移除空间',`从本机移除「${s.name||s.code}」？网盘数据不会被删除，重新输入邀请码即可回来。`,'移除')) return;
-        Store.removeSpace(s.code);
-        if(state.code===s.code) initStart(); else renderSpaceMgmt();
+        if(Store.role(s.code)==='creator') openDissolveModal(s.code); else openLeaveModal(s.code);
       };
-      btns.appendChild(out);
+      btn.textContent = Store.role(s.code)==='creator' ? '解散' : '退出';
+      btn.title = Store.role(s.code)==='creator'
+        ? '解散该空间：其他成员下次进入时会看到告知，并各自退出'
+        : '退出该空间：本机副本一并清掉，重新输入邀请码还能回来';
+      btns.appendChild(btn);
     }
     listEl.appendChild(item);
   });
@@ -642,41 +671,70 @@ $('#mgmtJoin').onclick=()=>{ if(needDav()) openSpaceModal('join'); };
 
 /* ---------- 批量管理日程 ---------- */
 let batchIds=[]; const batchSel=new Set();
+let batchGroups=[];            // [[组名, [id]]]
+const batchBox=new Map();      // 日程 id → 勾选框
+let batchHeads=[];             // { box: 组头元素, ids: [...] }
 $('#batchBtn').onclick=()=>{
   if(!state.code || !Store.get(state.code)) return toast('请先进入一个空间');
   renderBatch(); $('#batchModal').hidden=false;
 };
+/* 一组一组列：来自同一个系统日历的日程归成一组，组头那颗勾选框就是「整组一起删」。
+   只有系统日历导入的日程带分组名，其余（手工新建 / .ics）统一归到「其他」一组 */
+const BATCH_OTHER='本空间新建 / .ics 导入';
+function eventGroup(e){ return e.calDisp || (e.calAcct ? e.calAcct+'（未命名日历）' : BATCH_OTHER); }
 function renderBatch(){
   const data=Store.get(state.code);
-  batchIds=Object.keys(data.events).map(k=>data.events[k]).filter(e=>Store.owns(e.ownerId,data))
-    .sort((a,b)=>a.date.localeCompare(b.date)||String(a.start||'').localeCompare(String(b.start||'')))
-    .map(e=>e.id);
-  batchSel.clear();
-  const box=$('#batchList'); box.innerHTML='';
+  const mine=Object.keys(data.events).map(k=>data.events[k]).filter(e=>Store.owns(e.ownerId,data))
+    .sort((a,b)=>a.date.localeCompare(b.date)||String(a.start||'').localeCompare(String(b.start||'')));
+  batchIds=mine.map(e=>e.id); batchSel.clear();
+  const byGroup=new Map();
+  mine.forEach(e=>{ const g=eventGroup(e); if(!byGroup.has(g)) byGroup.set(g,[]); byGroup.get(g).push(e.id); });
+  batchGroups=[...byGroup.entries()];
+  const box=$('#batchList'); box.innerHTML=''; batchBox.clear(); batchHeads=[];
   if(!batchIds.length) box.innerHTML='<p class="set-note">这里还没有你自己创建的日程（导入的系统日程看归属标签）。</p>';
-  const idSet=new Set(batchIds);
-  batchIds.forEach(id=>{
-    const e=data.events[id];
-    const row=document.createElement('label'); row.className='batch-row';
-    const cb=document.createElement('input'); cb.type='checkbox';
-    cb.onchange=()=>{ cb.checked?batchSel.add(id):batchSel.delete(id); updateBatchBar(idSet); };
-    const span=document.createElement('span'); span.className='batch-t';
-    span.textContent=`${e.date}${e.start?' '+e.start:''} · ${e.title}`;
-    row.appendChild(cb); row.appendChild(span); box.appendChild(row);
+  /* 只有一组时分组纯属噪音（等于给整个列表加了个重复的全选），照常平铺 */
+  const grouped=batchGroups.length>1;
+  batchGroups.forEach(([g,ids])=>{
+    if(grouped){
+      const head=document.createElement('div'); head.className='batch-group';
+      const gcb=document.createElement('input'); gcb.type='checkbox';
+      gcb.onchange=()=>{ ids.forEach(id=>{ gcb.checked?batchSel.add(id):batchSel.delete(id); }); syncBatchChecks(); };
+      head.appendChild(gcb);
+      head.appendChild(el('span','batch-t',g));
+      head.appendChild(el('span','ig-cnt',ids.length+' 条'));
+      box.appendChild(head);
+      batchHeads.push({ box:head, ids });
+    }
+    ids.forEach(id=>{
+      const e=data.events[id];
+      const row=document.createElement('label'); row.className='batch-row'+(grouped?' sub':'');
+      const cb=document.createElement('input'); cb.type='checkbox';
+      cb.onchange=()=>{ cb.checked?batchSel.add(id):batchSel.delete(id); syncBatchChecks(); };
+      batchBox.set(id, cb);
+      row.appendChild(cb); row.appendChild(el('span','batch-t',`${e.date}${e.start?' '+e.start:''} · ${e.title}`));
+      box.appendChild(row);
+    });
   });
-  updateBatchBar(idSet);
+  syncBatchChecks();
 }
-function updateBatchBar(idSet){
+/* 勾选状态只有一个来源（batchSel），每次改动后统一回灌到各行与各组，
+   避免组框和行框各改各的最后对不上 */
+function syncBatchChecks(){
+  batchIds.forEach(id=>{ const cb=batchBox.get(id); if(cb) cb.checked=batchSel.has(id); });
+  batchHeads.forEach(({ box, ids })=>{
+    const cb=box.querySelector('input[type=checkbox]');
+    const hit=ids.filter(id=>batchSel.has(id)).length;
+    cb.checked = hit>0 && hit===ids.length;
+    cb.indeterminate = hit>0 && hit<ids.length;
+  });
+  const total=batchIds.length;
+  $('#batchAll').checked = total>0 && batchSel.size===total;
   $('#batchDel').textContent=`删除所选（${batchSel.size}）`;
   $('#batchDel').disabled=!batchSel.size;
-  const total=(idSet||new Set(batchIds)).size;
-  $('#batchAll').checked = total>0 && batchSel.size===total;
 }
 $('#batchAll').onchange=(ev)=>{
-  const on=ev.target.checked;
-  $('#batchList').querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked=on; });
-  batchSel.clear(); if(on) batchIds.forEach(id=>batchSel.add(id));
-  updateBatchBar();
+  batchSel.clear(); if(ev.target.checked) batchIds.forEach(id=>batchSel.add(id));
+  syncBatchChecks();
 };
 $('#batchClose').onclick=()=>{ $('#batchModal').hidden=true; };
 $('#batchDel').onclick=async()=>{
@@ -745,24 +803,56 @@ $('#memberClose').onclick = () => { $('#memberModal').hidden = true; };
 
 let leaveCode = null;
 let kickTarget = null;
+let dissolveCode = null;
 const LEAVE_TEXT_HTML = $('#leaveText').innerHTML;
 function myEventCount(code) {
   const data = Store.get(code);
   if (!data) return 0;
   return Object.keys(data.events).filter((id) => Store.owns(data.events[id].ownerId, data)).length;
 }
-function openLeaveModal(code) {
-  if (Store.role(code) === 'creator') return toast('创建者不能退出自己创建的空间：要清掉数据请用「☁ 清空」');
-  if (!Store.get(code)) return toast('这个空间还没有可读的数据，直接用「移除」从本机删掉就行');
-  leaveCode = code;
-  kickTarget = null;
+/* 空间里只剩自己一个活人时，退出/解散就等于这份云端数据再没人要了（会被一并删掉）。
+   这句话必须写在确认弹层上：「自动删除空空间」不能偷偷发生 */
+function lastOneNote(code) {
   const data = Store.get(code);
+  if (!data) return '';
+  const live = Object.keys(data.members).filter((id) => !data.members[id].out).length;
+  if (live > 1) return '';
+  const ev = Object.keys(data.events).length;
+  return `<br><b>这里只剩你一个成员</b>：退出或解散之后，网盘上这份数据${ev ? `（含 ${ev} 条日程）` : ''}会被一并删除，无法恢复。`;
+}
+function openLeaveModal(code) {
+  const data = Store.get(code);
+  if (Store.role(code) === 'creator') return toast('你是创建者：要收掉这个空间请用「解散」');
+  leaveCode = code; kickTarget = null; dissolveCode = null;
   $('#leaveTitle').textContent = '退出空间';
   $('#leaveOk').textContent = '确认退出';
-  $('#leaveText').innerHTML = LEAVE_TEXT_HTML;
+  if (data) {
+    $('#leaveText').innerHTML = LEAVE_TEXT_HTML + lastOneNote(code);
+    $('#leaveSpaceName').textContent = data.name || code;
+  } else {
+    $('#leaveText').innerHTML = '本机没有这个空间可读到的数据（多半是网盘账号不对或没同步过），退出只是把它从本机列表里清掉，网盘上的数据不动。以后重新输入邀请码还能进来。';
+  }
+  const n = myEventCount(code);
+  $('#leavePurgeWrap').classList.toggle('hidden', !n || !!lastOneNote(code));
+  $('#leavePurge').checked = false;
+  $('#leavePurgeText').textContent = `同时删除我在该空间创建的日程（${n} 条，其他成员也会同步看不到）`;
+  $('#leaveModal').hidden = false;
+}
+/* 解散：创建者特有的「退出」，区别是在云端留下解散标记，让别人下次进入时被明确告知 */
+function openDissolveModal(code) {
+  const data = Store.get(code);
+  if (!data) return openLeaveModal(code);
+  if (Store.role(code) !== 'creator') return toast('只有创建者可以解散空间');
+  dissolveCode = code; leaveCode = null; kickTarget = null;
+  const peers = Math.max(0, Store.liveCount(code) - 1);
+  $('#leaveTitle').textContent = '解散空间';
+  $('#leaveOk').textContent = '确认解散';
+  $('#leaveText').innerHTML = '解散「<b id="leaveSpaceName"></b>」？网盘上的这份数据会先留着，其他'
+    + (peers ? peers + ' 位' : '') + '成员下次进入这个空间时会看到「空间已被创建者解散」，确认后各自退出；最后离开的人负责把它删掉。'
+    + lastOneNote(code);
   $('#leaveSpaceName').textContent = data.name || code;
   const n = myEventCount(code);
-  $('#leavePurgeWrap').classList.toggle('hidden', !n);
+  $('#leavePurgeWrap').classList.toggle('hidden', !n || !!lastOneNote(code));
   $('#leavePurge').checked = false;
   $('#leavePurgeText').textContent = `同时删除我在该空间创建的日程（${n} 条，其他成员也会同步看不到）`;
   $('#leaveModal').hidden = false;
@@ -771,7 +861,7 @@ function openLeaveModal(code) {
 function openKickModal(m) {
   const data = Store.get(memberCode) || {};
   kickTarget = { code: memberCode, id: m.id };
-  leaveCode = null;
+  leaveCode = null; dissolveCode = null;
   $('#leaveTitle').textContent = '移出成员';
   $('#leaveOk').textContent = '确认移出';
   $('#leaveText').innerHTML = '把「<b>' + escapeHtml(m.name) + '</b>」移出「' + escapeHtml(data.name || memberCode)
@@ -799,14 +889,27 @@ $('#leaveOk').onclick = async () => {
       renderMembers(); renderSpaceMgmt();
       return;
     }
-    if (!leaveCode) return;
-    const code = leaveCode;
+    const code = dissolveCode || leaveCode;
+    const mode = dissolveCode ? 'dissolve' : 'leave';
+    if (!code) return;
+    /* 本机根本没有可读数据：没有云端可写，退出就只是把它从本机列表里拿掉 */
+    if (!Store.get(code)) {
+      Store.removeSpace(code);
+      $('#leaveModal').hidden = true;
+      toast('已从本机移除该空间');
+      if (state.code === code) { state.code = null; stopPolling(); initStart(); } else renderSpaceMgmt();
+      return;
+    }
     if (!needDav(code)) return;
-    /* 先把「退出」写进云端成员表，成功后才清本机副本：反过来做就等于没退出过 */
-    if (!await Store.leave(code, { dropMine: drop })) return;
+    const peers = Math.max(0, Store.liveCount(code) - (mode === 'dissolve' ? 1 : 0));
+    /* 先把「退出 / 解散」写进云端，成功后才清本机副本：反过来做就等于没退过 */
+    const r = mode === 'dissolve' ? await Store.dissolve(code, { dropMine: drop }) : await Store.leave(code, { dropMine: drop });
+    if (!r) return toast(mode === 'dissolve' ? '只有创建者可以解散空间' : '你是创建者：要收掉这个空间请用「解散」');
+    dissolveCode = null; leaveCode = null;
     Store.removeSpace(code);
     $('#leaveModal').hidden = true;
-    toast('已退出该空间');
+    toast(r.purged ? (mode === 'dissolve' ? '已解散；这个空间已经没有成员，网盘上的数据一并删除了' : '已退出；这是最后一个成员，网盘上的数据一并删除了')
+      : mode === 'dissolve' ? `已解散，其他 ${peers} 位成员下次进入时会看到告知` : '已退出该空间');
     if (state.code === code) { state.code = null; stopPolling(); initStart(); } else renderSpaceMgmt();
   } catch (e) { toast(e.message); }
   finally { btn.disabled = false; }
@@ -833,39 +936,39 @@ async function notifyKickedOut(code) {
 /* 同步时发现被移出：与「下次进入空间」是同一条路，复用上面那个告知 */
 Store.onKicked(notifyKickedOut);
 
-/* ---------- 清空云端空间数据 ---------- */
-let clearTarget=null;
-function openClearModal(code,name){
-  clearTarget=code;
-  $('#clearSpaceName').textContent=name;
-  $('#clearAlsoLocal').checked=false;
-  $('#clearModal').hidden=false;
+/* 创建者解散了空间：跟「被移出」同一条告知路子，只是主语换成创建者，并且明确说出这份数据随后会被删掉。
+   确认后本机退出；同时把自己也记作已退出，最后离开的那台设备负责把网盘上这份文档删掉 */
+let dissolvingNotice = false; // 「同步时发现」和「点进这个空间」可能同时到，别弹两次
+async function notifyDissolved(code) {
+  if (dissolvingNotice) return;
+  dissolvingNotice = true;
+  try {
+    const data = Store.get(code);
+    if (!data) { Store.removeSpace(code); renderSpaceMgmt(); return; }
+    const st = Store.status(code);
+    if (state.code === code) stopPolling();
+    await uiConfirm('空间已被创建者解散',
+      `「${data.name || code}」的创建者已经解散了这个空间。点确定后本机退出该空间、清掉存的这份副本`
+      + (st.dirty ? '（注意：本机还有没同步出去的改动，会一起丢掉）' : '')
+      + '。网盘上的那份数据会在最后一个成员也退出之后删除。',
+      '知道了，退出空间', true);
+    await Store.acknowledgeDissolve(code);
+    Store.removeSpace(code);
+    $('#switchModal').hidden = true;
+    toast('已退出被解散的空间');
+    if (state.code === code) { state.code = null; initStart(); } else renderSpaceMgmt();
+  } catch (e) { toast(e.message); }
+  finally { dissolvingNotice = false; }
 }
-$('#clearCancel').onclick=()=>{ $('#clearModal').hidden=true; };
-$('#clearOk').onclick=async()=>{
-  if(!clearTarget) return;
-  const btn=$('#clearOk'); btn.disabled=true;
-  try{
-    if(needDav()){
-      await Dav.remove(clearTarget);
-      const alsoLocal=$('#clearAlsoLocal').checked;
-      if(alsoLocal){
-        Store.removeSpace(clearTarget);
-        if(state.code===clearTarget) initStart(); else renderSpaceMgmt();
-        toast('云端与本机数据均已清空');
-      } else {
-        toast('云端数据已清空；本机数据保留，下次同步将以本机重建云端');
-      }
-    }
-    $('#clearModal').hidden=true;
-  }catch(e){ toast(e.message); }
-  finally{ btn.disabled=false; }
-};
+
+/* 同步时发现空间被解散：与「下次进入空间」共用上面那条告知 */
+Store.onDissolved(notifyDissolved);
 
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
   /* 成员记录上已经写着「被别人移出」的人，先把这条通知看完，别把一个没位置的空间当成正常使用 */
   if (Store.kickedOut(code)) { await notifyKickedOut(code); return; }
+  if (Store.isDissolved(code)) { await notifyDissolved(code); return; }
   state.code=code;
   if(state.defView!=='last'){ state.view=state.defView; localStorage.setItem(VIEW_KEY,state.view); } /* 设置里指定的默认视图 */
   localStorage.setItem('tm:lastSpace', code); // 下次冷启动直接回到这个空间
@@ -873,6 +976,9 @@ async function enterSpace(code){
   let data = Store.get(code), etag;
   if(!data){ const remote = await Store.openRemote(code); data = remote.data; etag = remote.etag; }
   await Store.attach(code, data, etag);
+  /* 本机还没有这份数据时上面那道 isDissolved 关卡看不到标记（刚重发邀请码进来的人就是这样）：
+     读到云端原文后补一次判定，别把人放进一个已经散掉的空间 */
+  if (data.dissolved) { await notifyDissolved(code); return; }
   Store.ensureMember(code); /* 被别人用旧版本覆盖掉时，回到空间就先把自己补回成员表 */
   Store.dedupe(code);
   $('#spaceName').textContent=data.name||'共享日程';
@@ -989,6 +1095,7 @@ function splitMarks(list){
 function renderCalendar(fresh){
   const data=Store.get(state.code); if(!data) return;
   const cal=$('#calendar'), ag=$('#agenda');
+  cal.style.height=''; cal.classList.remove('sizing'); // 折叠动画跑到一半时切视图：固定高度别留在时间轴身上
   document.querySelectorAll('#viewSeg .seg-btn').forEach((b)=>b.classList.toggle('active', b.dataset.val===state.view));
   cal.innerHTML=''; ag.innerHTML='';
   $('#calMain').classList.toggle('with-agenda', state.view==='month');
@@ -1005,7 +1112,7 @@ function renderCalendar(fresh){
     $('#weekHeader').hidden=true;
     renderTimeGrid(data, cal, state.view==='week'?weekDays(state.day):[state.day], fresh);
   }
-  $('#monthToggle').textContent = state.monthCollapsed ? '⌄' : '⌃';
+  $('#monthToggle').classList.toggle('down', state.monthCollapsed); // 图标本身不换字，转 180° 才有连续感
   $('#monthTitle').innerHTML = state.view==='month'
     ? escapeHtml(`${state.year}年${state.month}月`)
     : (state.view==='week'
@@ -1286,8 +1393,31 @@ $('#viewSeg').onclick=(e)=>{ const b=e.target.closest('.seg-btn'); if(b && b.dat
 /* ---------- 月视图折叠：上滑收起整月（只留选中那一行），下划展开 ---------- */
 function setMonthCollapsed(v){
   if(state.monthCollapsed===v) return;
+  const cal=$('#calendar');
+  const fromH=cal.offsetHeight;
   state.monthCollapsed=v;
   renderCalendar();
+  unfoldHeight(cal, fromH);
+}
+/* 收起靠的是 .cell{display:none}，高度是瞬间跳的，看着像整块日历被抽掉；
+   在旧高度和新自然高度之间补一段 transition，格子跟着容器一起长回来/压回去 */
+function unfoldHeight(el, fromH){
+  const toH=el.offsetHeight;
+  if(!fromH || Math.abs(toH-fromH)<2) return;
+  const end=()=>{
+    el.classList.remove('sizing'); el.style.height='';
+    el.removeEventListener('transitionend',end);
+    clearTimeout(kick);
+  };
+  const kick=setTimeout(end,520); // 中途又被重绘时 transitionend 不一定来，别把内联高度留在身上
+  el.style.height=fromH+'px';
+  /* 起点要实在地画上一帧才开始过渡：同一帧里改高度的话，展开那个方向会先僵住再跳过去（实测） */
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    if(el.style.height!==fromH+'px') return; // 这期间已被别的渲染接管，就别再插手
+    el.classList.add('sizing');
+    el.style.height=toH+'px';
+    el.addEventListener('transitionend',end);
+  }));
 }
 $('#monthToggle').onclick=()=>setMonthCollapsed(!state.monthCollapsed);
 /* 横滑切视图：月→周→日（反向亦然），不必每次去点顶栏的切换钮。
@@ -1342,6 +1472,7 @@ function openDetail(ev, data, ds){
   if(ev.rrule) lines.push(`重复：${REPEAT_ZH[(ev.rrule.freq||'').toUpperCase()]||ev.rrule.freq}`);
   if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
   if(ev.location) lines.push(`地点：${ev.location}`);
+  if(ev.calDisp||ev.calAcct) lines.push(`来自日历：${ev.calDisp}${ev.calAcct?'（'+ev.calAcct+'）':''}`);
   if(ev.desc) lines.push(`备注：${ev.desc}`);
   $('#detailMeta').innerHTML=lines.map(l=>`<div class="dm-row">${escapeHtml(l)}</div>`).join('');
   $('#detailDelete').classList.toggle('hidden', !mine);
@@ -1451,7 +1582,7 @@ function fillImportOwner(){
   sel.value=Store.resolve(data,myId());
   if(sel.selectedIndex<0 && sel.options.length) sel.selectedIndex=0; // 自己还没进成员表时给个默认
 }
-$('#importBtn').onclick=()=>{ if(!state.code) return toast('请先进入一个空间'); fillImportOwner(); $('#permBtn').hidden=true; $('#harCalTip').hidden=!CalBridge.isHarmony(); $('#importModal').hidden=false; };
+$('#importBtn').onclick=()=>{ if(!state.code) return toast('请先进入一个空间'); fillImportOwner(); resetImportGroups(); $('#permBtn').hidden=true; $('#harCalTip').hidden=!CalBridge.isHarmony(); $('#importModal').hidden=false; };
 $('#importCancel').onclick=()=>{ $('#importModal').hidden=true; };
 $('#permBtn').onclick=()=>CalBridge.openSettings();
 /* 读不到日程时，把原生侧报来的「扫了哪些日历、各读到几条、哪个报错」摊开说，省得猜真机现场 */
@@ -1461,6 +1592,46 @@ function importEmptyMsg(r){
   const head = r.raw ? `读到的 ${r.raw} 条都是本应用回写出去的日程，已跳过` : '系统日历中近一年没有可读到的日程';
   return head + dbg + (r.debug ? '。鸿蒙上应用只能读到本应用自己写的日程，可用弹窗里的「从 .ics 文件导入」' : '');
 }
+/* ---------- 按日历分组导入 ----------
+   原生侧读系统日程时把每条所在日历的显示名/账户名一起报回来（calDisp/calAcct）。
+   一次读取先摊成「一个日历一组」让人挑，导入时把分组名随日程存进空间文档：
+   以后批量管理能按日历整组删，详情里也看得出一条是从哪个日历搬来的 */
+let pendingSys=[]; const sysGroupSel=new Set();
+function sysGroupOf(e){ return e.calDisp || e.calAcct || '未命名日历'; }
+function sysGroups(evs){
+  const m=new Map();
+  evs.forEach(e=>{ const k=sysGroupOf(e); if(!m.has(k)) m.set(k,[]); m.get(k).push(e); });
+  return [...m.entries()].sort((a,b)=>b[1].length-a[1].length);
+}
+function resetImportGroups(){ pendingSys=[]; sysGroupSel.clear(); $('#importGroups').classList.add('hidden'); }
+function updateIgBar(){
+  const gs=sysGroups(pendingSys);
+  $('#igAll').checked = gs.length>0 && sysGroupSel.size===gs.length;
+  const n=pendingSys.filter(e=>sysGroupSel.has(sysGroupOf(e))).length;
+  const btn=$('#importSysSave');
+  btn.textContent=`📥 导入所选日历（${n} 条）`; btn.disabled=!n;
+  $('#igNote').textContent=`读到 ${pendingSys.length} 条，分布在 ${gs.length} 个日历里。同一条重复导入会自动跳过，先勾一个试试也不会写重。`;
+}
+function renderImportGroups(){
+  const box=$('#igList'); box.innerHTML='';
+  sysGroups(pendingSys).forEach(([name,list])=>{
+    const row=document.createElement('label'); row.className='batch-row';
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=sysGroupSel.has(name);
+    cb.onchange=()=>{ cb.checked?sysGroupSel.add(name):sysGroupSel.delete(name); updateIgBar(); };
+    row.appendChild(cb);
+    row.appendChild(el('span','batch-t',name));
+    row.appendChild(el('span','ig-cnt',list.length+' 条'));
+    box.appendChild(row);
+  });
+  $('#importGroups').classList.remove('hidden');
+  updateIgBar();
+}
+$('#igAll').onchange=(ev)=>{
+  sysGroupSel.clear();
+  if(ev.target.checked) sysGroups(pendingSys).forEach(([name])=>sysGroupSel.add(name));
+  $('#igList').querySelectorAll('input[type=checkbox]').forEach(cb=>{ cb.checked=ev.target.checked; });
+  updateIgBar();
+};
 $('#sysImportBtn').onclick=async()=>{
   if(!state.code) return;
   try{
@@ -1468,11 +1639,24 @@ $('#sysImportBtn').onclick=async()=>{
     toast('正在读取系统日历…');
     const now=Date.now(), YEAR=365*86400000;
     const r=await CalBridge.fetchEvents(now-YEAR, now+YEAR);
-    if(!r.events.length) return toast(importEmptyMsg(r));
-    const n=Store.addEvents(state.code, r.events, $('#importOwner').value||myId());
-    toast(n ? `已导入 ${n} 条系统日程（重复的已自动跳过）` : '没有新日程，之前都已导入过');
-    $('#importModal').hidden=true;
+    if(!r.events.length){ resetImportGroups(); return toast(importEmptyMsg(r)); }
+    pendingSys=r.events;
+    sysGroups(pendingSys).forEach(([name])=>sysGroupSel.add(name)); // 默认全勾，减一个是一组
+    renderImportGroups();
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
+};
+$('#importSysSave').onclick=async()=>{
+  const chosen=pendingSys.filter(e=>sysGroupSel.has(sysGroupOf(e)));
+  if(!chosen.length) return;
+  const n=Store.addEvents(state.code, chosen, $('#importOwner').value||myId());
+  /* 早先导入的同日历日程只存了 sourceUid（cal:日历id:事件id）、没存名字：
+     这次读到的 id→名字 顺手补上去，批量管理时它们才不会和手工新建的挤在一组 */
+  const map={};
+  chosen.forEach(e=>{ const m=/^cal:(\d+):/.exec(e.sourceUid||''); if(m&&e.calDisp) map[m[1]]=e.calDisp; });
+  const back=Store.tagSourceGroups(state.code, map);
+  resetImportGroups(); $('#importModal').hidden=true;
+  toast(n ? `已导入 ${n} 条系统日程${back?`，另外 ${back} 条旧日程补上了日历分组`:''}（重复的已自动跳过）`
+    : '这些日历的日程之前都已导入过（分组名已补齐）');
 };
 $('#writeBackBtn').onclick=async()=>{
   if(!state.code) return;
