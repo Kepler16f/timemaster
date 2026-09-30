@@ -104,12 +104,16 @@ jobs:
           archive: false
 
       - name: 追加到已有 Release（绝不新建）
-        if: inputs.publish == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH: '${{ inputs.publish }}'
         run: |
           set -euo pipefail
+          # 判断放在 shell 里做：`if: inputs.publish == 'true'` 从来不会成立——
+          # workflow_dispatch 的 boolean 输入到表达式比较时已被转成真值，两边比不上，
+          # 结果勾了 publish 也只是安静地跳过。${{ }} 渲染成字符串则布尔/串两种传法都认。
+          [ "$PUBLISH" = "true" ] || { echo "publish 未勾选，只构建产物不追加 Release"; exit 0; }
           # 发版时机由 App/鸿蒙那条流水线决定（它负责打标签和写更新说明）；
           # 这里只把桌面包挂到同一个 tag 上，Release 不存在就什么都不做
           VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
