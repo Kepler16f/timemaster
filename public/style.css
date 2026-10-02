@@ -346,6 +346,17 @@ html[data-theme="dark"] .modal { box-shadow: 0 -10px 44px rgba(0,0,0,.5); }
 .modal .checkbox input { width: 18px; height: 18px; accent-color: var(--accent); }
 .modal .big-btn.ghost { text-align: left; padding: 14px 16px; font-size: 15px; }
 .time-row label { flex: 1; }
+/* ---------- 重复日程的补充行（选了频率才出现） ---------- */
+.rep-cap { flex: 0 0 52px; font-size: 14px; color: var(--sub); }
+.rep-wd { display: flex; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.modal .wd {
+  flex: 1 1 0; min-width: 0; height: 34px; padding: 0; appearance: none; -webkit-appearance: none;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--sub);
+  font-size: 13px; cursor: pointer; transition: background .18s, color .18s, border-color .18s;
+}
+.modal .wd.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.modal .rep-num { flex: 0 0 auto; width: 78px; padding: 8px 10px; text-align: center; }
+#evRepEnd, #evRepUntil { flex: 1 1 auto; min-width: 0; }
 .import-tip { font-size: 12px; color: var(--text-weak); line-height: 1.65; }
 .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
 /* ---------- 单选提问弹层 ---------- */
@@ -626,5 +637,5 @@ html.tm-desktop ::-webkit-scrollbar-track { background: transparent; }
 @media (prefers-reduced-motion: reduce) {
   .screen.anim-from-right, .screen.anim-from-left, .screen.anim-fade,
   .modal-mask, .modal { animation: none; }
-  .calendar.sizing, .month-toggle, .seg-btn, .tabbar .tab, .auth-bind > summary::after { transition: none; }
+  .calendar.sizing, .month-toggle, .seg-btn, .tabbar .tab, .auth-bind > summary::after, .wd { transition: none; }
 }

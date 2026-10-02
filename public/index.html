@@ -201,6 +201,17 @@
         </div>
       </div>
 
+      <div class="set-group">
+        <div class="set-title">备份与找回</div>
+        <button class="big-btn ghost" id="exportIcsBtn">📤 导出当前空间为 .ics</button>
+        <div class="set-row">
+          <span class="set-sub">写回前在本机留快照</span>
+          <label class="set-inline" for="snapSw"><span>留</span><input type="checkbox" id="snapSw"></label>
+        </div>
+        <p class="set-note">网盘没有回收站，同步又是整篇文档覆盖。开着时每次写回前，本机先存下覆盖前的那一版：每个空间最多 <span id="snapMax">6</span> 份，十天半个月前删掉的那条也可能还在。<span id="snapStat"></span></p>
+        <button class="big-btn ghost" id="snapBtn">🕰 查看 / 恢复本机快照</button>
+      </div>
+
       <div class="set-group" id="calGroup">
         <div class="set-title">系统日历</div>
         <button class="big-btn ghost" id="importBtn">🔄 导入 / 回写系统日历</button>
@@ -355,6 +366,35 @@
           <option value="yearly">每年</option>
         </select>
       </label>
+      <!-- 选了频率才展开：不重复的日程占三行空白太吵 -->
+      <div class="rep-more hidden" id="evRepMore">
+        <div class="row rep-days hidden" id="evRepDays">
+          <span class="rep-cap">重复于</span>
+          <div class="rep-wd" id="evWeekdays"></div>
+        </div>
+        <div class="row">
+          <span class="rep-cap">间隔</span>
+          <input type="number" class="rep-num" id="evInterval" min="1" max="30" step="1" value="1" />
+          <span id="evIntervalUnit">周</span>
+        </div>
+        <div class="row">
+          <span class="rep-cap">结束</span>
+          <select id="evRepEnd">
+            <option value="never">永不结束</option>
+            <option value="count">重复几次</option>
+            <option value="until">直到某天</option>
+          </select>
+        </div>
+        <div class="row hidden" id="evRepCountRow">
+          <span class="rep-cap">共</span>
+          <input type="number" class="rep-num" id="evRepCount" min="1" max="999" step="1" value="10" />
+          <span>次</span>
+        </div>
+        <div class="row hidden" id="evRepUntilRow">
+          <span class="rep-cap">直到</span>
+          <input type="date" id="evRepUntil" />
+        </div>
+      </div>
       <label>地点<input type="text" id="evLocation" placeholder="可选，例如 图书馆三楼" /></label>
       <label>备注<input type="text" id="evDesc" placeholder="可选" /></label>
       <div class="modal-actions">
@@ -460,6 +500,32 @@
       <div class="modal-actions">
         <button id="renameCancel" class="action-btn">取消</button>
         <button id="renameSave" class="action-btn primary">保存并同步</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 导出 .ics：手机内核存不了文件，给全文供复制 ============ -->
+  <div class="modal-mask" id="exportModal" hidden>
+    <div class="modal">
+      <h3 id="exportTitle">导出日程</h3>
+      <p class="import-tip" id="exportTip"></p>
+      <textarea id="exportText" readonly rows="10" spellcheck="false"></textarea>
+      <div class="modal-actions">
+        <button id="exportClose" class="action-btn">关闭</button>
+        <button id="exportCopy" class="action-btn primary">复制全文</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 本机快照 ============ -->
+  <div class="modal-mask" id="snapModal" hidden>
+    <div class="modal">
+      <h3>本机快照</h3>
+      <p class="import-tip">每一行是本机某次写回「之前」的云端那一版。恢复只补现在不在了的日程，别人后来改过的不动。</p>
+      <div class="batch-list" id="snapList"></div>
+      <div class="modal-actions">
+        <button id="snapClear" class="action-btn">清空本机快照</button>
+        <button id="snapClose" class="action-btn">关闭</button>
       </div>
     </div>
   </div>

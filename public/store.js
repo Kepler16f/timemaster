@@ -255,6 +255,84 @@
   function notify(code) { listeners.forEach((fn) => fn(code)); }
   function onChange(fn) { listeners.push(fn); }
 
+  /* ---------- 写回前的本机快照 ----------
+     网盘没有回收站，同步又是整篇文档覆盖：一次误删、一次写坏，除了墓碑什么都找不回来。
+     所以每次准备把本机盖到云端之前，先把云端当前那一版留在本机，按空间环形存几份，
+     出事后能自己救回来。这是后台自动发生的行为，设置里给了总开关。 */
+  const SNAP_ON_KEY = 'tm:snapOn';
+  const SNAP_MAX = 6;                 // 每个空间最多留 6 份
+  const SNAP_GAP = 10 * 60 * 1000;    // 10 分钟内的连续写回只留一份，环形队列才铺得开一整天
+  const SNAP_BUDGET = 3 * 1024 * 1024; // 所有空间合计最多 3MB（localStorage 一般 5MB，留点余量）
+  function snapEnabled() { return localStorage.getItem(SNAP_ON_KEY) !== '0'; } // 默认开
+  function snapKey(code) { return 'tm:snap:' + code; }
+  function snapList(code) {
+    let a;
+    try { a = JSON.parse(localStorage.getItem(snapKey(code)) || '[]'); } catch (e) { return []; }
+    return Array.isArray(a) ? a : [];
+  }
+  function snapCodes() {
+    return Object.keys(localStorage).filter((k) => k.indexOf('tm:snap:') === 0).map((k) => k.slice(8));
+  }
+  function snapBytes() {
+    return snapCodes().reduce((n, code) => n + (localStorage.getItem(snapKey(code)) || '').length, 0);
+  }
+  /* 超预算就从最老的一份开始丢：留快照是为了救命，不能反过来把网盘配置、别的空间副本挤没了 */
+  function trimSnapBudget() {
+    for (let guard = 0; guard < 64 && snapBytes() > SNAP_BUDGET; guard++) {
+      let victim = null;
+      snapCodes().forEach((code) => {
+        const list = snapList(code);
+        const oldest = list[list.length - 1];
+        if (oldest && (!victim || oldest.t < victim.oldest.t)) victim = { code, list, oldest };
+      });
+      if (!victim) return;
+      victim.list.pop();
+      if (victim.list.length) localStorage.setItem(snapKey(victim.code), JSON.stringify(victim.list));
+      else localStorage.removeItem(snapKey(victim.code));
+    }
+  }
+  function pushSnapshot(code, text) {
+    if (!snapEnabled() || !text) return;
+    const list = snapList(code);
+    if (list[0] && Date.now() - list[0].t < SNAP_GAP) return;
+    list.unshift({ t: Date.now(), bytes: text.length, text });
+    while (list.length > SNAP_MAX) list.pop();
+    for (let i = 0; i <= SNAP_MAX; i++) {
+      try { localStorage.setItem(snapKey(code), JSON.stringify(list)); break; }
+      catch (e) {
+        /* 塞不下就一份份丢再试；丢到一份都塞不进时直接放弃，别把已经存着的那几份也删了 */
+        if (list.length <= 1) return;
+        list.pop();
+      }
+    }
+    trimSnapBudget();
+  }
+  /* 找回来的只是「现在没有的那几条」：还留在云端的日程以现行版本为准，
+     不然一次恢复会把别人这两天的编辑一起退回去。新写入的时间戳压过删除墓碑，
+     合并时才不会被云端那条旧墓碑再杀一次 */
+  function restoreSnapshot(code, t) {
+    const c = loadLocal(code);
+    if (!c.data) return 0;
+    const snap = snapList(code).find((s) => s.t === t);
+    if (!snap || !snap.text) return 0;
+    let doc;
+    try { doc = JSON.parse(snap.text); } catch (e) { return 0; }
+    if (!doc || !doc.events) return 0;
+    let revived = 0;
+    mutate(code, (d) => {
+      Object.keys(doc.events).forEach((id) => {
+        if (d.events[id]) return;
+        const e = doc.events[id];
+        /* 时间戳压过任何先于此刻写下的删除墓碑（+1 而不是取当刻：同一毫秒里删的墓碑会和它相等，
+           相等时按墓碑判，刚找回来的这条又死一次） */
+        d.events[id] = Object.assign({}, e, { id, updatedAt: Math.max(Date.now() + 1, (e.updatedAt || 0) + 1), by: App.clientId });
+        delete d.deletions[id];
+        revived++;
+      });
+    });
+    return revived;
+  }
+
   /* ---------- 同步状态机 ----------
      每轮：拉远端 → 合并 → 若有本地改动则写回。
      只读不写时带 etag（304 零流量）；一旦要写回就无条件拉一次全量再合并——
@@ -274,6 +352,8 @@
           c.missing = 0;
           c.lastError = '';
           const remote = JSON.parse(r.text);
+          /* 这一版云端文档马上要被本机盖掉，先留下它 */
+          if (c.dirty) pushSnapshot(code, r.text);
           const remoteMembers = Object.keys(remote.members || {});
           c.gone = 0;
           c.data = c.data ? merge(c.data, remote) : remote;
@@ -530,7 +610,19 @@
       localStorage.setItem('tm:spaces', JSON.stringify(spaces));
       if (localStorage.getItem('tm:lastSpace') === code) localStorage.removeItem('tm:lastSpace');
       localStorage.removeItem(localKey(code));
+      localStorage.removeItem(snapKey(code)); // 空间都退了，快照别再占着本机存储
       delete cache[code];
+    },
+    snaps: {
+      enabled: snapEnabled,
+      setEnabled(v) { localStorage.setItem(SNAP_ON_KEY, v ? '1' : '0'); },
+      /* 列表只回元信息：正文动辄几百 KB，界面用不着一次全捞出来 */
+      list(code) { return snapList(code).map((s) => ({ t: s.t, bytes: s.bytes })); },
+      text(code, t) { const s = snapList(code).find((x) => x.t === t); return s ? s.text : ''; },
+      restore: restoreSnapshot,
+      clear(code) { localStorage.removeItem(snapKey(code)); },
+      bytes() { return snapBytes(); },
+      max: SNAP_MAX,
     },
     addEvent(code, ev) {
       const s = stamp();

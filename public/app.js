@@ -339,6 +339,7 @@ function openSettings(){
   fillDavForm(); refreshProfile(); renderSpaceMgmt(); renderAccountSection();
   showDeviceId();
   renderUpdate();
+  syncSnapUI();
   $('#appVersion').textContent='v'+APP_VERSION;
   showScreen('settingsScreen');
 }
@@ -1054,6 +1055,26 @@ function renderPeopleTags(){
 /* ---------- 视图引擎：月（成员色块 + 当日日程卡列表）/ 周 / 日时间轴 ---------- */
 const REPEAT_ZH = { DAILY:'每天', WEEKLY:'每周', MONTHLY:'每月', YEARLY:'每年' };
 const WD_ZH = ['周日','周一','周二','周三','周四','周五','周六'];
+const REPEAT_UNIT = { DAILY:'天', WEEKLY:'周', MONTHLY:'个月', YEARLY:'年' };
+const WD_CODES = ['SU','MO','TU','WE','TH','FR','SA']; /* 与 IcsParser.DAYMAP 同一套顺序 */
+
+/* 重复说明：每 2 周 · 周三、周六 · 直到 2026-12-31。short 给卡片用，只到频率与星期 */
+function repeatText(r, short){
+  if(!r || !r.freq) return '';
+  const f = String(r.freq).toUpperCase();
+  const iv = Math.max(1, parseInt(r.interval || 1, 10) || 1);
+  const parts = [ iv > 1 ? `每${iv}${REPEAT_UNIT[f] || ''}` : (REPEAT_ZH[f] || f) ];
+  if(f === 'WEEKLY' && r.byDay && r.byDay.length){
+    parts.push(r.byDay.slice().sort((a,b)=>IcsParser.DAYMAP[a]-IcsParser.DAYMAP[b])
+      .map((c)=>WD_ZH[IcsParser.DAYMAP[c]] || c).join('、'));
+  }
+  if(f === 'MONTHLY' && r.byMonthDay && r.byMonthDay.length) parts.push(r.byMonthDay.join('、')+' 日');
+  if(!short){
+    if(r.count) parts.push(`共 ${r.count} 次`);
+    else { const u = IcsParser.untilStr(r.until); if(u) parts.push(`直到 ${u}`); }
+  }
+  return parts.join(' · ');
+}
 
 function todayStr(){ const t=new Date(); return dateStr(t.getFullYear(),t.getMonth()+1,t.getDate()); }
 function shiftDay(ds,n){ const d=IcsParser.parseDate(ds); d.setDate(d.getDate()+n); return IcsParser.dstr(d); }
@@ -1228,7 +1249,7 @@ function evCard(data, e, ds){
   main.appendChild(el('div','ec-title', e.type==='normal'?e.title:(e.title+'（'+(e.type==='work'?'班':'休')+'）')));
   const meta=[];
   meta.push(owner.name+(Store.owns(e.ownerId,data)?'（我）':''));
-  if(e.rrule) meta.push(REPEAT_ZH[(e.rrule.freq||'').toUpperCase()]||'重复');
+  if(e.rrule) meta.push(repeatText(e.rrule, true));
   if(e.location) meta.push(e.location);
   if(e.desc) meta.push(e.desc);
   main.appendChild(el('div','ec-meta',meta.join(' · ')));
@@ -1469,7 +1490,7 @@ function openDetail(ev, data, ds){
   lines.push(`日期：${detailDate}${detailDate!==ev.date?'（原起于 '+ev.date+'）':''}${ev.endDate?' → '+ev.endDate:''}`);
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
   if(ev.allDay || !ev.start) lines.push('全天');
-  if(ev.rrule) lines.push(`重复：${REPEAT_ZH[(ev.rrule.freq||'').toUpperCase()]||ev.rrule.freq}`);
+  if(ev.rrule) lines.push(`重复：${repeatText(ev.rrule)}`);
   if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
   if(ev.location) lines.push(`地点：${ev.location}`);
   if(ev.calDisp||ev.calAcct) lines.push(`来自日历：${ev.calDisp}${ev.calAcct?'（'+ev.calAcct+'）':''}`);
@@ -1506,21 +1527,86 @@ function openEventModal(presetDate,ev){
   $('#evStart').value=(ev&&ev.start)||'09:00'; $('#evEnd').value=(ev&&ev.end)||'10:00';
   $('#evType').value=(ev&&ev.type)||'normal'; $('#evDesc').value=(ev&&ev.desc)||'';
   $('#evLocation').value=(ev&&ev.location)||'';
-  $('#evRepeat').value=ev&&ev.rrule?(String(ev.rrule.freq||'none').toLowerCase()):'none';
+  fillRepeatForm(ev?ev.rrule:null);
   $('#eventModal').hidden=false;
 }
 $('#eventCancel').onclick=()=>{ $('#eventModal').hidden=true; editingEvent=null; };
 $('#evAllDay').onchange=(e)=>{ $('#timeRow').style.display=e.target.checked?'none':'flex'; };
+
+/* ---------- 重复细节行：选了频率才展开，不重复的日程不必占四行空白 ---------- */
+const REP_DAY_ORDER=['MO','TU','WE','TH','FR','SA','SU']; /* 周一排到周日，和月历表头一致 */
+let keepRepByMonthDay=null;
+function pickedWeekdays(){
+  return [...document.querySelectorAll('#evWeekdays .wd.on')].map((b)=>b.dataset.day);
+}
+function setWeekdays(days){
+  document.querySelectorAll('#evWeekdays .wd').forEach((b)=>b.classList.toggle('on',!!days&&days.indexOf(b.dataset.day)>-1));
+}
+function syncRepeatRows(){
+  const f=$('#evRepeat').value, end=$('#evRepEnd').value;
+  $('#evRepMore').classList.toggle('hidden',f==='none');
+  $('#evRepDays').classList.toggle('hidden',f!=='weekly');
+  $('#evIntervalUnit').textContent=REPEAT_UNIT[f.toUpperCase()]||'';
+  $('#evRepCountRow').classList.toggle('hidden',end!=='count');
+  $('#evRepUntilRow').classList.toggle('hidden',end!=='until');
+}
+(function buildWeekdayChips(){
+  const box=$('#evWeekdays');
+  REP_DAY_ORDER.forEach((c)=>{
+    const b=el('button','wd'); b.type='button'; b.dataset.day=c;
+    b.textContent=WD_ZH[IcsParser.DAYMAP[c]].slice(1); /* 「周三」→「三」，格子只放得下一个字 */
+    b.onclick=()=>b.classList.toggle('on');
+    box.appendChild(b);
+  });
+})();
+/* 刚切到「每周」时把开始日那天先亮起来：展开逻辑在无 BYDAY 时就是按开始日的星期走的，
+   这里让界面显示的和高亮缺省的那条一致，免得看到一排空格以为没选 */
+function defaultWeekdayChip(){
+  const ds=$('#evDate').value; if(!ds) return;
+  const p=ds.split('-');
+  setWeekdays([WD_CODES[new Date(Number(p[0]),Number(p[1])-1,Number(p[2])).getDay()]]);
+}
+$('#evRepeat').onchange=()=>{
+  if($('#evRepeat').value==='weekly'&&!pickedWeekdays().length) defaultWeekdayChip();
+  syncRepeatRows();
+};
+$('#evRepEnd').onchange=syncRepeatRows;
+
+function repeatFromForm(){
+  const f=$('#evRepeat').value.toUpperCase();
+  if(f==='NONE') return null;
+  const r={ freq:f, interval:Math.min(30,Math.max(1,parseInt($('#evInterval').value,10)||1)),
+    byDay:null, byMonthDay:keepRepByMonthDay, count:null, until:null };
+  if(f!=='MONTHLY') r.byMonthDay=null;
+  if(f==='WEEKLY'){ const d=pickedWeekdays(); if(d.length) r.byDay=d; }
+  const end=$('#evRepEnd').value;
+  if(end==='count') r.count=Math.min(999,Math.max(1,parseInt($('#evRepCount').value,10)||1));
+  else if(end==='until') r.until=$('#evRepUntil').value||null;
+  return r;
+}
+function fillRepeatForm(r){
+  /* 弹层里没有「每月几号」的选择器，而导入的 .ics 常带 BYMONTHDAY；
+     改动这条日程的别的字段时把它原样带着走，丢了就悄悄变成按开始日的号数出现 */
+  keepRepByMonthDay=r&&r.byMonthDay?r.byMonthDay.slice():null;
+  $('#evRepeat').value=r?String(r.freq||'none').toLowerCase():'none';
+  $('#evInterval').value=(r&&r.interval)||1;
+  $('#evRepEnd').value=r&&r.count?'count':(r&&r.until?'until':'never');
+  $('#evRepCount').value=(r&&r.count)||10;
+  $('#evRepUntil').value=r?IcsParser.untilStr(r.until)||'':'';
+  setWeekdays(r?r.byDay:null);
+  syncRepeatRows();
+}
 $('#eventSave').onclick=async()=>{
   const date=$('#evDate').value; if(!date) return toast('请选择日期');
   const allDay=$('#evAllDay').checked;
-  const rep=$('#evRepeat').value;
+  const rrule=repeatFromForm();
+  if(rrule&&rrule.until&&rrule.until<date) return toast('「直到某天」要晚于开始日期');
   const ev={
     title:$('#evTitle').value.trim()||'未命名日程', date,
     allDay, start:allDay?'':$('#evStart').value,
     end:allDay?'':$('#evEnd').value, type:$('#evType').value, desc:$('#evDesc').value,
     location:$('#evLocation').value.trim(),
-    rrule: rep!=='none' ? { freq:rep.toUpperCase(), interval:1, byDay:null, byMonthDay:null, count:null, until:null } : null,
+    rrule,
   };
   if(allDay) ev.endDate=null;
   let ok=true;
@@ -1685,6 +1771,88 @@ $('#importSave').onclick=async()=>{
   if(!parsed.length) return toast('未解析到日程');
   Store.addEvents(state.code, parsed, $('#importOwner').value);
   $('#importModal').hidden=true; toast(`导入 ${parsed.length} 条（循环日程存规则，不炸开）`);
+};
+
+/* ---------- 备份与找回：导出 .ics + 写回前的本机快照 ---------- */
+/* blob 下载只有浏览器和桌面端可靠；安卓/鸿蒙的 WebView 点了不给存文件，
+   那里改成把全文摊出来让人复制走 */
+const canSaveFile=()=>isDesktopShell()||!(window.Capacitor||(window.CalBridge&&CalBridge.isHarmony()));
+function icsFileName(name){
+  const base=String(name||'space').replace(/[\\/:*?"<>|\s]+/g,'-').slice(0,40);
+  return 'reunion-'+base+'.ics';
+}
+function saveTextAsFile(text,fileName){
+  const a=el('a'); a.href=URL.createObjectURL(new Blob([text],{type:'text/calendar;charset=utf-8'}));
+  a.download=fileName; document.body.appendChild(a); a.click();
+  /* 立刻 revoke 的话 Firefox 和部分内核还没取走数据；留两秒足够它开始下载 */
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },2000);
+}
+$('#exportIcsBtn').onclick=()=>{
+  if(!state.code) return toast('请先进入一个空间');
+  const d=Store.get(state.code)||{events:{}};
+  const evs=Object.keys(d.events||{}).map((k)=>d.events[k]);
+  if(!evs.length) return toast('这个空间还没有日程');
+  const text=IcsParser.buildICS(evs,{name:d.name||state.code});
+  const fn=icsFileName(d.name||state.code);
+  if(canSaveFile()){ saveTextAsFile(text,fn); return toast('已导出 '+fn+'（'+evs.length+' 条）'); }
+  $('#exportTitle').textContent='导出 '+evs.length+' 条日程';
+  $('#exportTip').textContent='这台设备的网页内核不让应用直接存文件：全选下面内容，粘贴进备忘录存成 '+fn+'，就能在别的日历里导入。';
+  $('#exportText').value=text;
+  $('#exportModal').hidden=false;
+};
+$('#exportClose').onclick=()=>{ $('#exportModal').hidden=true; };
+$('#exportCopy').onclick=async()=>{
+  try{ await navigator.clipboard.writeText($('#exportText').value); }
+  catch(e){ $('#exportText').select(); document.execCommand('copy'); } // WebView 里 clipboard API 常不给（非安全上下文）
+  toast('已复制，去备忘录粘贴保存');
+};
+
+function syncSnapUI(){
+  $('#snapSw').checked=Store.snaps.enabled();
+  $('#snapMax').textContent=Store.snaps.max;
+  const mb=(Store.snaps.bytes()/1024/1024).toFixed(2);
+  $('#snapStat').textContent=state.code?('；当前空间有 '+Store.snaps.list(state.code).length+' 份，本机一共占 '+mb+' MB。'):'';
+}
+$('#snapSw').onchange=(e)=>{
+  Store.snaps.setEnabled(e.target.checked);
+  syncSnapUI();
+  toast(e.target.checked?'以后写回前会留快照':'已停止留快照，已有的那些还留着');
+};
+function snapTimeText(t){
+  const d=new Date(t), p=(n)=>(''+n).padStart(2,'0');
+  return (d.getMonth()+1)+'月'+d.getDate()+'日 '+p(d.getHours())+':'+p(d.getMinutes());
+}
+function renderSnapList(){
+  const box=$('#snapList'); box.innerHTML='';
+  const list=Store.snaps.list(state.code);
+  if(!list.length){
+    box.appendChild(el('p','import-tip',Store.snaps.enabled()?'这个空间还没有快照——本机没有待写入的改动时不会生成，下次改完日程同步就有了。':'留快照的开关现在是关的，先在设置里打开。'));
+    return;
+  }
+  list.forEach((s)=>{
+    let n=0;
+    try{ n=Object.keys(JSON.parse(Store.snaps.text(state.code,s.t)).events||{}).length; }catch(e){ /* 坏了一行不影响别的能恢复 */ }
+    const row=el('div','batch-row');
+    row.appendChild(el('div','batch-t',snapTimeText(s.t)+' · '+n+' 条 · '+Math.round(s.bytes/1024)+' KB'));
+    const btn=el('button','action-btn','恢复');
+    btn.onclick=async()=>{
+      if(!await uiConfirm('恢复这一版？','把这份快照里有、而现在不在了的日程补回来，并同步给空间里所有人。现在还在的日程不会被改。','恢复')) return;
+      const back=Store.snaps.restore(state.code,s.t);
+      toast(back?('已找回 '+back+' 条，稍后自动同步'):'这一版没有可找回的日程，都还在');
+      renderSnapList(); syncSnapUI();
+    };
+    row.appendChild(btn);
+    box.appendChild(row);
+  });
+}
+$('#snapBtn').onclick=()=>{
+  if(!state.code) return toast('请先进入一个空间');
+  renderSnapList(); $('#snapModal').hidden=false;
+};
+$('#snapClose').onclick=()=>{ $('#snapModal').hidden=true; syncSnapUI(); };
+$('#snapClear').onclick=async()=>{
+  if(!await uiConfirm('清空本机快照','清空之后就找不回这些版本了。','清空')) return;
+  Store.snaps.clear(state.code); renderSnapList(); syncSnapUI(); toast('已清空');
 };
 
 /* ---------- 应用内更新：安卓/鸿蒙走原生插件，桌面端走 Tauri 下载 + 应用内弹层 ---------- */

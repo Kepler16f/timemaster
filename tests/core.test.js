@@ -7,8 +7,15 @@ const win = {};
 win.window = win;
 win.crypto = require('crypto').webcrypto;
 win.localStorage = (() => {
+  /* 真实 Storage 除了按 key 取值，还能被 Object.keys 枚举（快照的容量清理就靠这个）：
+     所以每个键同时挂成自身属性，别做成只有三个方法的假对象 */
   const m = new Map();
-  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
+  const s = {
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => { m.set(k, String(v)); s[k] = String(v); },
+    removeItem: (k) => { m.delete(k); delete s[k]; },
+  };
+  return s;
 })();
 win.document = { addEventListener() {}, visibilityState: 'visible', hidden: false };
 win.setTimeout = setTimeout; win.clearTimeout = clearTimeout;
@@ -74,6 +81,47 @@ eq('expand: daily/2 + until', occ, ['2026-09-01', '2026-09-03', '2026-09-05', '2
 const monthly = { date: '2026-01-31', rrule: { freq: 'MONTHLY', interval: 1, count: null, until: null, byDay: null, byMonthDay: [15, 31] } };
 occ = expandOccurrences(monthly, '2026-02-01', '2026-04-30');
 eq('expand: byMonthDay 31 短月钳制', occ, ['2026-02-15', '2026-02-28', '2026-03-15', '2026-03-31', '2026-04-15', '2026-04-30']);
+
+/* COUNT 与 UNTIL：这两个值都要经过云端 JSON 往返，测试形状就按往返后写 —— until 是字符串 */
+const counted = { date: '2026-09-01', rrule: { freq: 'DAILY', interval: 1, count: 10, until: null, byDay: null, byMonthDay: null } };
+eq('expand: count 从最初那次数起（窗口外的历史出现也占名额）',
+  expandOccurrences(counted, '2026-09-08', '2026-09-30'), ['2026-09-08', '2026-09-09', '2026-09-10']);
+const untilStrEv = { date: '2026-09-01', rrule: { freq: 'DAILY', interval: 2, count: null, until: '2026-09-09T00:00:00.000Z', byDay: null, byMonthDay: null } };
+eq('expand: until 同步过后变成字符串照样截断',
+  expandOccurrences(untilStrEv, '2026-09-01', '2026-09-30'), ['2026-09-01', '2026-09-03', '2026-09-05', '2026-09-07', '2026-09-09']);
+eq('expand: until 之前的月份整段为空就什么都不给',
+  expandOccurrences(untilStrEv, '2026-09-10', '2026-09-30'), []);
+/* 每周多选：byDay 决定周内哪几天出现，间隔 2 周则跳周（2026-09-02 是周三，周六是 09-05） */
+const biweekly = { date: '2026-09-02', rrule: { freq: 'WEEKLY', interval: 2, count: null, until: null, byDay: ['WE', 'SA'], byMonthDay: null } };
+eq('expand: 每周三六 + 隔周',
+  expandOccurrences(biweekly, '2026-09-01', '2026-09-30'), ['2026-09-02', '2026-09-05', '2026-09-16', '2026-09-19', '2026-09-30']);
+
+/* ---------- 2b. 导出 .ics：自家导出的文本再导回来，日程必须一模一样 ---------- */
+const { buildICS } = win.IcsParser;
+const longDesc = '第一行\n' + '很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长';
+const srcEvs = [
+  { id: 'a1', title: '出差三天', date: '2026-09-16', endDate: '2026-09-18', allDay: true, start: '', end: '', desc: '', location: '', rrule: null },
+  { id: 'a2', title: '组会, 三五六; 带\\反斜杠', date: '2026-10-02', allDay: false, start: '09:00', end: '10:00',
+    desc: longDesc, location: '图书馆三楼', rrule: { freq: 'WEEKLY', interval: 2, byDay: ['WE', 'FR', 'SA'], byMonthDay: null, count: null, until: '2026-11-14' } },
+  { id: 'a3', title: '班', date: '2026-10-10', allDay: true, start: '', end: '', desc: '', location: '', rrule: null, type: 'work' },
+];
+const exported = buildICS(srcEvs, { name: '测试空间' });
+const back = parseICS(exported);
+eq('export: 条数一致', back.length, 3);
+eq('export: 全天跨日区间还原', back.find((e) => e.title === '出差三天').endDate, '2026-09-18');
+const zc = back.find((e) => e.rrule);
+eq('export: 逗号分号反斜杠还原', zc.title, srcEvs[1].title);
+eq('export: 折行的备注还原', zc.desc, longDesc);
+eq('export: 地点还原', zc.location, '图书馆三楼');
+eq('export: BYDAY 还原', zc.rrule.byDay, ['WE', 'FR', 'SA']);
+eq('export: 间隔还原', zc.rrule.interval, 2);
+/* UNTIL 导成 UTC 后换个时区可能差一天，所以窗口取在截止日之前，两边展开应当一致 */
+eq('export: 展开出的日期完全一致',
+  expandOccurrences(zc, '2026-10-01', '2026-11-05'), expandOccurrences(srcEvs[1], '2026-10-01', '2026-11-05'));
+eq('export: 班/休类型还原', back.find((e) => e.title === '班').type, 'work');
+const maxBytes = (s) => [...s].reduce((n, ch) => n + (ch.codePointAt(0) < 0x80 ? 1 : ch.codePointAt(0) < 0x800 ? 2 : ch.codePointAt(0) < 0x10000 ? 3 : 4), 0);
+eq('export: 每行不超过 75 字节', exported.split('\r\n').every((l) => maxBytes(l) <= 75), true);
+eq('export: 用 CRLF 分行', exported.indexOf('\r\n') > -1 && !/[^\r]\n/.test(exported), true);
 
 /* ---------- 3. 合并引擎（借 Store 内部逻辑：直接构造同形数据比对） ---------- */
 const store = win.Store;
@@ -440,6 +488,39 @@ store.attach('C1', local);
     eq('kicked: 同步时通知界面（由界面问用户要不要移除本机副本）', kickedCode, 'S11');
     eq('kicked: 自己的 out 标记没被 ensureSelf 抹掉', store.get('S11').members.sisDev.out, 123);
     eq('kicked: 被移出的人不算管理员', store.isManager('S11'), false);
+  }
+
+  /* ---------- 6. 写回前的本机快照：网盘没有回收站，覆盖前得能自己救回来 ---------- */
+  {
+    win.Auth = { memberKey: () => 'me', session: () => null };
+    const ev = (id, t) => ({ id, ownerId: 'me', title: 'E' + id, date: '2026-09-21', allDay: false, start: '', end: '', type: 'normal', desc: '', updatedAt: t, by: 'me' });
+    const cloud = { v: 2, code: 'S20', name: 'S20', createdBy: 'me',
+      members: { me: { name: 'T', color: '#fff', joinedAt: 1, updatedAt: 1, by: 'me' } },
+      events: { keep: ev('keep', 100), gone: ev('gone', 100) }, deletions: {}, retired: {} };
+    store.attach('S20', JSON.parse(JSON.stringify(cloud)));
+    store.deleteEvent('S20', 'gone');
+    win.Dav.get = async () => ({ status: 200, etag: 'W/"20"', text: JSON.stringify(cloud) });
+    let putBody = '';
+    win.Dav.put = async (code, body) => { putBody = body; return { status: 200, etag: 'W/"21"' }; };
+    await store.syncCode('S20');
+    eq('snap: 开关默认是开的', store.snaps.enabled(), true);
+    const snaps = store.snaps.list('S20');
+    eq('snap: 盖写云端之前留下旧版一份', snaps.length, 1);
+    eq('snap: 列表只给元信息、不带正文', snaps[0].text, undefined);
+    eq('snap: 快照正文里那条还在', JSON.parse(store.snaps.text('S20', snaps[0].t)).events.gone.title, 'Egone');
+    eq('snap: 恢复只补现在没有的那条', store.snaps.restore('S20', snaps[0].t), 1);
+    eq('snap: 找回来的那条标题对得上', store.get('S20').events.gone.title, 'Egone');
+    /* 此刻云端仍留着这条的删除墓碑：恢复写入的时间戳必须压过它，否则同步一轮又被杀回去 */
+    win.Dav.get = async () => ({ status: 200, etag: 'W/"22"', text: putBody });
+    await store.syncCode('S20');
+    eq('snap: 恢复后的那条不会下一轮就被墓碑杀掉', !!store.get('S20').events.gone, true);
+    store.snaps.setEnabled(false);
+    store.mutate('S20', (d) => { d.events.extra = ev('extra', Date.now() + 5); });
+    await store.syncCode('S20');
+    eq('snap: 关掉开关后不再新增快照', store.snaps.list('S20').length, 1);
+    store.snaps.setEnabled(true);
+    store.removeSpace('S20');
+    eq('snap: 退掉空间时连同快照一起清掉', store.snaps.bytes(), 0);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
