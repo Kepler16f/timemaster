@@ -121,15 +121,18 @@ ROADMAP.md              设计与取舍的详细记录
 
 | 流水线 | 触发 | 产出 |
 | --- | --- | --- |
-| `android.yml` | push main / tag `v*` | `app-debug.apk`（artifact）+ Release 上的 `reunion-vX.Y.Z.apk`；tag 触发额外签名 release 包 |
-| `harmony.yml` | push main（`harmony-shell/**`、`public/**` 有改动） | `timemaster.hap`（artifact）+ Release 上的 `reunion-vX.Y.Z.hap` |
+| `release.yml` | 手动运行（勾 publish 才发 Release） | 调用下面三条构建全部包，再把六个安装包一次挂上同一条 Release |
+| `android.yml` | push main / tag `v*` | `app-debug.apk`（artifact）；tag 触发额外签名 release 包 |
+| `harmony.yml` | push main（`harmony-shell/**`、`public/**` 有改动） | `timemaster-unsigned.hap`（artifact） |
+| `desktop.yml` | push main（`desktop-shell/**`、`public/**` 有改动） | `reunion-<版本>-<目标>.<exe/deb>`（artifact），win-x64/win-arm64/linux-x64/linux-arm64 |
 
 要点：
 
+- 发版只有一条路：`gh workflow run release.yml -f publish=true`。三条平台流水线只构建出制品，不再各自往 Release 上挂包，免得两套发版逻辑把 Release 说明写成一半。
 - HAP 由 `ErBWs/setup-ohos` 拉取公开 SDK 镜像（带 sha256 校验）后用命令行 hvigor 构建，**不需要 DevEco Studio、不需要登录华为账号**。
-- CI 产出的 HAP **未签名**。签名与安装由使用者在本地完成（`ohos-sign` 或 DevEco），仓库里不放任何证书。
+- CI 产出的 HAP **未签名**，所以 Release 上它是 `reunion-vX.Y.Z-unsigned.hap`；主名 `reunion-vX.Y.Z.hap` 留给本机 `scripts/hap-sign-local.sh` 签好的那份（受限日历权限的授权载体是签名 profile，私钥不进仓库）。
 - artifact 一律以原始文件形式上传（`archive: false`），不套 zip。
-- Release 说明由 `scripts/release-notes.sh` 依据上一个 `v*` 标签到当前提交的记录自动生成，两条流水线共用。
+- Release 说明由 `scripts/release-notes.sh` 取 CHANGELOG 里比仓库上已有最新标签新的那些小节，原样写进 Release。
 - 版本号只在 `public/app.js` 的 `APP_VERSION` 一处定义，CI 从这里解析出 tag 与产物文件名；改版本时同步 `android-shell/app/build.gradle` 的 `versionName/versionCode` 与 `harmony-shell` 的 `versionName`。
 
 ## 七、本地开发

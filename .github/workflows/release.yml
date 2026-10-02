@@ -1,0 +1,107 @@
+name: Release All
+
+# 发版唯一入口：一次 dispatch 出齐六个安装包并挂上同一条 Release。
+#   gh workflow run release.yml -f publish=true
+# 不勾 publish 时照样全构建，只是把「本会上传哪些文件」打出来 —— 用来在真要发版之前
+# 验证调用链、制品名和下载映射都没问题。
+# 三条平台工作流（android/harmony/desktop）在这里只负责构建与上传制品，它们各自的
+# 发布步骤已经收进本文件的 publish job，避免出现第二套发版路径各写各的说明。
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 发布为 GitHub Release（不勾则只构建并列产物）
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    name: APK
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
+  harmony:
+    name: HAP
+    uses: ./.github/workflows/harmony.yml
+    secrets: inherit
+
+  desktop:
+    name: 桌面端四目标
+    uses: ./.github/workflows/desktop.yml
+    secrets: inherit
+
+  publish:
+    name: 汇总六个包并发 Release
+    needs: [android, harmony, desktop]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PUBLISH: ${{ inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 收齐本次运行的制品
+        run: |
+          set -euo pipefail
+          # 用 artifacts API 而不是 gh run download：archive:false 的制品本来就不是 zip，
+          # gh run download 会报「zip: not a valid zip file」
+          mkdir -p raw stage
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.expired == false) | "\(.name)\t\(.archive_download_url)"' > names.tsv
+          test -s names.tsv || { echo "这次运行一个制品都没有，前面三条构建是不是都没成功？"; exit 1; }
+          while IFS=$'\t' read -r name url; do
+            curl -sSL -H "Authorization: Bearer $GH_TOKEN" -o "raw/$name" "$url"
+            printf '%s\t%sB\n' "$name" "$(wc -c < "raw/$name" | tr -d ' ')"
+          done < names.tsv
+
+      - name: 按发版文件名归置
+        run: |
+          set -euo pipefail
+          VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
+          test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
+          # 制品名与 Release 上的文件名：手机两端在这里对名，桌面四包的制品名本来就是最终名
+          # （reunion-<版本>-<目标>.<后缀>，public/update.js 里「打开发布页」按这个挑对得上自己系统的那条）
+          for f in raw/*; do
+            n=$(basename "$f")
+            case "$n" in
+              app-debug.apk)            cp "$f" "stage/reunion-v$VER.apk" ;;
+              timemaster-unsigned.hap)  cp "$f" "stage/reunion-v$VER-unsigned.hap" ;;
+              "reunion-$VER-"*)         cp "$f" "stage/$n" ;;
+              *) echo "::warning::不认识的制品 $n，不挂 Release" ;;
+            esac
+          done
+          # 鸿蒙主名 reunion-vX.hap 留给本机签好的包（scripts/hap-sign-local.sh 上传）：
+          # CI 这份没有签名 profile 里的 ACL 授权，装上去拿不到「读全部日历」那类受限权限
+          ls -l stage
+          test "$(find stage -type f | wc -l)" -eq 6 || {
+            echo "产物不齐，应当有 apk + unsigned hap + 桌面四包，现在只有："; ls stage; exit 1;
+          }
+          echo "VER=$VER" >> "$GITHUB_ENV"
+
+      - name: 发布到 GitHub Release
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISH" != "true" ]; then
+            echo "publish 未勾选，以下六个包只留在这次运行里："
+            ls stage
+            exit 0
+          fi
+          git config user.name ci-bot && git config user.email ci-bot@users.noreply.github.com
+          TAG_SHA=$(git ls-remote origin "refs/tags/v$VER" | awk '{print $1}')
+          if [ -n "$TAG_SHA" ] && [ "$TAG_SHA" != "$(git rev-parse HEAD)" ]; then
+            echo "::warning::v$VER 已发布于 $TAG_SHA，与当前提交 $(git rev-parse HEAD) 不同 —— 跳过发布。请先提升 public/app.js 的 APP_VERSION。"
+            exit 0
+          fi
+          git ls-remote --exit-code --tags origin "refs/tags/v$VER" >/dev/null 2>&1 || {
+            git tag "v$VER" && git push origin "v$VER"
+          }
+          bash scripts/release-notes.sh "$VER" RELEASE_NOTES.md
+          gh release create "v$VER" --title "Reunion v$VER" --notes-file RELEASE_NOTES.md 2>/dev/null || true
+          gh release edit "v$VER" --title "Reunion v$VER" --notes-file RELEASE_NOTES.md
+          gh release upload "v$VER" stage/* --clobber
+          echo "已发布：$(gh release view "v$VER" --json url -q .url)"

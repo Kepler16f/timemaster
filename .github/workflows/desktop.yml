@@ -1,15 +1,12 @@
 name: Desktop CI
 
 on:
-  # 手动运行并勾 publish，才会把桌面包追加到已有的 v版本号 Release；push 只出产物
+  # 单独重跑桌面构建用；发 Release 一律走 release.yml（它调用本文件并把四个包一起挂上）
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 追加到已存在的 GitHub Release（不勾则只留 Actions 产物）
-        type: boolean
-        default: false
+  # 供 release.yml 调用
+  workflow_call:
   push:
-    branches: [PC]
+    branches: [main]
     paths:
       - 'desktop-shell/**'
       - 'public/**'
@@ -31,20 +28,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # ext 与 label 一起写进制品名，release.yml 直接拿制品名当 Release 上的文件名，
+          # 不必在下载之后再猜谁的扩展名是 exe、谁是 deb
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             label: win-x64
+            ext: exe
           # 同一台 x64 runner 交叉出 arm64：Windows arm64 装机量小，不值得排 ARM runner
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             label: win-arm64
+            ext: exe
           # x64 用 22.04（glibc 2.35）而不是最新的，免得老 Ubuntu/Debian 装上就跑不起来
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
+            ext: deb
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             label: linux-arm64
+            ext: deb
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -86,6 +89,8 @@ jobs:
           # （Release 上一堆长名字看不出谁是谁），应用内「打开发布页」也按这个命名挑对得上自己系统的那条
           VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
           test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
+          # 交给下一步当制品名：release.yml 下载下来直接就是 Release 上该用的文件名
+          echo "VER=$VER" >> "$GITHUB_ENV"
           mkdir -p dist
           find "desktop-shell/src-tauri/target/${{ matrix.target }}/release/bundle" -type f \
             \( -name '*.exe' -o -name '*.deb' \) | while read -r f; do
@@ -97,31 +102,8 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: reunion-desktop-${{ matrix.label }}
+          name: reunion-${{ env.VER }}-${{ matrix.label }}.${{ matrix.ext }}
           # 每个 target 只产一个安装包，archive:false 让制品就是原始文件本身——
           # 免下载后再解一层 zip（Linux 以前带 AppImage 时有两个文件才会报错，现在只出 deb）
           path: dist/*
           archive: false
-
-      - name: 追加到已有 Release（绝不新建）
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # 判断放在 shell 里做：写成 `if: inputs.publish == 'true'` 从来不会成立——
-          # boolean 型的 workflow_dispatch 输入在表达式比较前就被转成了真值，和字符串 'true'
-          # 比不上，结果勾了 publish 也只是安静地跳过。渲染进 shell 则两种传法都是文本 true。
-          if [ "${{ inputs.publish }}" != "true" ]; then
-            echo "publish 未勾选，只构建产物不追加 Release"
-            exit 0
-          fi
-          # 发版时机由 App/鸿蒙那条流水线决定（它负责打标签和写更新说明）；
-          # 这里只把桌面包挂到同一个 tag 上，Release 不存在就什么都不做
-          VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
-          test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
-          if ! gh release view "v$VER" >/dev/null 2>&1; then
-            echo "v$VER 还没有 Release，跳过追加"
-            exit 0
-          fi
-          gh release upload "v$VER" dist/* --clobber

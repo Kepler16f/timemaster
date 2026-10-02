@@ -12,13 +12,10 @@ on:
       - 'package*.json'
       - 'capacitor.config.*'
       - '.github/workflows/android.yml'
-  # 手动运行时可勾选 publish，才会发 GitHub Release；push 只构建产物
+  # 单独重跑安卓构建用；发 Release 一律走 release.yml（一条流水线出全部六个安装包）
   workflow_dispatch:
-    inputs:
-      publish:
-        description: 发布为 GitHub Release（不勾则只留 Actions 产物）
-        type: boolean
-        default: false
+  # 供 release.yml 调用。被调用时 inputs 全空，与本文件作为「只出产物」的定位一致
+  workflow_call:
 
 permissions:
   contents: write
@@ -57,31 +54,6 @@ jobs:
           name: app-debug.apk
           path: android-shell/app/build/outputs/apk/debug/app-debug.apk
           archive: false
-
-      - name: 发布到 GitHub Release（App 内更新从这里取包）
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # 发不发 Release 由人决定：push 触发的构建只留 Actions 产物
-          if [ "${{ inputs.publish }}" != "true" ]; then
-            echo "publish 未勾选，只构建产物不发 Release"
-            exit 0
-          fi
-          VER=$(sed -n "s/^const APP_VERSION *= *'\([0-9.]*\)'.*/\1/p" public/app.js | head -1)
-          test -n "$VER" || { echo "解析 APP_VERSION 失败"; exit 1; }
-          cp android-shell/app/build/outputs/apk/debug/app-debug.apk "reunion-v$VER.apk"
-          git config user.name ci-bot && git config user.email ci-bot@users.noreply.github.com
-          TAG_SHA=$(git ls-remote origin "refs/tags/v$VER" | awk '{print $1}')
-          if [ -n "$TAG_SHA" ] && [ "$TAG_SHA" != "$(git rev-parse HEAD)" ]; then
-            echo "::warning::v$VER 已发布于 $TAG_SHA，与当前提交不同 —— 跳过发布。请先提升 public/app.js 的 APP_VERSION。"
-            exit 0
-          fi
-          git ls-remote --exit-code --tags origin "refs/tags/v$VER" >/dev/null 2>&1 || { git tag "v$VER"; git push origin "v$VER" || echo "标签已被另一条流水线创建，忽略"; }
-          bash scripts/release-notes.sh "$VER" RELEASE_NOTES.md
-          gh release create "v$VER" --title "Reunion v$VER" --notes-file RELEASE_NOTES.md 2>/dev/null || true
-          gh release edit "v$VER" --title "Reunion v$VER" --notes-file RELEASE_NOTES.md
-          gh release upload "v$VER" "reunion-v$VER.apk" --clobber
 
   release-apk:
     name: Build signed release APK (tag v*)
