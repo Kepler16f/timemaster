@@ -53,11 +53,11 @@
       else if (raw.trim() !== '') lines.push(raw);
     });
     const events = [];
-    let inEvent = false, cur = null;
+    let inEvent = false, inAlarm = false, cur = null;
     for (const line of lines) {
       if (/^BEGIN:VEVENT$/i.test(line)) {
         inEvent = true;
-        cur = { title: '未命名日程', desc: '', location: '', type: null, rrule: null, uid: null, start: null, end: null };
+        cur = { title: '未命名日程', desc: '', location: '', type: null, rrule: null, uid: null, start: null, end: null, rem: 0 };
         continue;
       }
       if (/^END:VEVENT$/i.test(line)) {
@@ -69,6 +69,7 @@
             desc: cur.desc, location: cur.location, rrule: cur.rrule, sourceUid: cur.uid,
             type: cur.type === 'work' || cur.type === 'rest' ? cur.type : 'normal',
           };
+          if (cur.rem > 0) ev.rem = cur.rem;
           // 全天跨多日：记录结束日（DTEND 排他），供渲染逐日出现
           if (cur.start.allDay && cur.end && cur.end.allDay) {
             const e = parseDate(cur.end.date); e.setDate(e.getDate() - 1);
@@ -78,10 +79,18 @@
         }
         inEvent = false; cur = null; continue;
       }
+      if (/^BEGIN:VALARM$/i.test(line)) { inAlarm = true; continue; }
+      if (/^END:VALARM$/i.test(line)) { inAlarm = false; continue; }
       if (!inEvent || !cur) continue;
       const idx = line.indexOf(':');
       if (idx === -1) continue;
       const head = line.slice(0, idx), key = head.split(';')[0].toUpperCase(), val = line.slice(idx + 1);
+      if (inAlarm) {
+        /* 只认「提前 n 分钟」的负时长提醒（-PT30M / -P1D 都收成分钟）；
+           开始之后的提醒没有意义，正时长一律忽略 */
+        if (key === 'TRIGGER') cur.rem = Math.max(0, triggerMinutes(val));
+        continue;
+      }
       if (key === 'SUMMARY') cur.title = icalUnesc(val) || '未命名日程';
       else if (key === 'DESCRIPTION') cur.desc = icalUnesc(val);
       else if (key === 'LOCATION') cur.location = icalUnesc(val);
@@ -148,8 +157,19 @@
         const months = (d.getFullYear() - start.getFullYear()) * 12 + (d.getMonth() - start.getMonth());
         if (hit && months % interval !== 0) hit = false;
       } else if (r.freq === 'YEARLY') {
-        hit = d.getMonth() === start.getMonth() && d.getDate() === start.getDate()
-          && (d.getFullYear() - start.getFullYear()) % interval === 0;
+        if (r.lunar && window.Lunar) {
+          /* 农历每年：把两端公历都转成农历月日再比对。闰月出生的人只在有同序号闰月的年份过生日，
+             平年直接不过——宁可空着也不挪到别的日子。相邻两次出现的公历年份恰好都差 1，
+             所以 interval 按「公历年份差」数与按农历年数完全等价 */
+          const ls = Lunar.solar2lunar(start.getFullYear(), start.getMonth() + 1, start.getDate());
+          const lc = ls ? Lunar.solar2lunar(d.getFullYear(), d.getMonth() + 1, d.getDate()) : null;
+          hit = !!ls && !!lc && lc.m === ls.m && lc.d === ls.d && lc.leap === ls.leap
+            && d.getFullYear() >= start.getFullYear()
+            && (d.getFullYear() - start.getFullYear()) % interval === 0;
+        } else {
+          hit = d.getMonth() === start.getMonth() && d.getDate() === start.getDate()
+            && (d.getFullYear() - start.getFullYear()) % interval === 0;
+        }
       }
       if (!hit || d < start) continue;
       // COUNT 从最初那次出现数起，不是从当前窗口数起：窗口外的历史出现照样占名额，
@@ -224,6 +244,9 @@
       if (ev.location) v.push('LOCATION:' + icalEsc(ev.location));
       if (ev.desc) v.push('DESCRIPTION:' + icalEsc(ev.desc));
       if (ev.rrule) v.push('RRULE:' + rruleOut(ev.rrule, tz));
+      if (ev.rem > 0) v.push('BEGIN:VALARM', 'ACTION:DISPLAY',
+        'TRIGGER:-PT' + Math.round(ev.rem) + 'M',
+        'DESCRIPTION:' + icalEsc(ev.title || '日程提醒'), 'END:VALARM');
       if (ev.type === 'work' || ev.type === 'rest') v.push('CATEGORIES:' + (ev.type === 'work' ? '班' : '休'), 'X-REUNION-TYPE:' + ev.type);
       v.push('END:VEVENT');
       L.push.apply(L, foldLines(v));
@@ -232,6 +255,14 @@
     return L.join('\r\n') + '\r\n';
   }
   function hms(t) { return String(t || '00:00').replace(/:/g, '') + '00'; }
+  /* RFC 5545 时长：-P1DT1H30M / -PT90M → 分钟。认不得的形状返回 0（不提醒） */
+  function triggerMinutes(val) {
+    const m = /^-?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/i.exec(String(val || '').trim());
+    if (!m) return 0;
+    const neg = String(val).trim().charAt(0) === '-';
+    const min = ((+m[1] || 0) * 10080) + ((+m[2] || 0) * 1440) + ((+m[3] || 0) * 60) + (+m[4] || 0);
+    return neg ? min : 0;
+  }
   function shiftDateStr(s, n) { const d = parseDate(s); d.setDate(d.getDate() + n); return dstr(d); }
   function utcCompact(d) {
     return '' + d.getUTCFullYear() + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCDate())
