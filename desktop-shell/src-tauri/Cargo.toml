@@ -1,6 +1,6 @@
 [package]
 name = "reunion"
-version = "0.6.0"
+version = "0.6.1"
 description = "Reunion — 多人共享日程（桌面端）"
 edition = "2021"
 
