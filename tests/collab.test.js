@@ -92,6 +92,23 @@ function mkEvent(id, ownerId, updatedAt, rsvp) {
     eq('rsvp: 别人的键在清除后仍在', !!store.get('R4').events.e1.rsvp.b, true);
     /* 别人的日程也能答：正文编辑权归创建者，出勤是自己的事 */
     eq('rsvp: 他人的日程允许应答', store.setRsvp('R4', 'e1', 'maybe'), true);
+    /* 抬 updatedAt 会让这台设备的旧正文在 LWW 里获胜，把别人刚改的标题顶回去（真实丢数据） */
+    eq('rsvp: 应答不抬整条的 updatedAt', store.get('R4').events.e1.updatedAt, 100);
+  }
+
+  /* ---------- 2b. 应答出勤绝不参与正文的 LWW 竞争 ---------- */
+  {
+    const mk = (t, title, start) => ({
+      id: 'e1', ownerId: 'b', title, date: '2026-10-01', allDay: false,
+      start, end: '', type: 'normal', updatedAt: t, by: 'b',
+    });
+    await store.attach('S9', mkDoc('S9', { e1: Object.assign(mk(100, '原标题', '09:00'), { rsvp: {} }) }));
+    store.setRsvp('S9', 'e1', 'no');                       // 本机拿着旧正文答了个「不去」
+    await store.attach('S9', mkDoc('S9', { e1: Object.assign(mk(200, '乙改过的', '14:00'), { rsvp: {} }) }));
+    const e = store.get('S9').events.e1;
+    eq('出勤: 云端较新的标题不被旧正文顶掉', e.title, '乙改过的');
+    eq('出勤: 云端较新的时间不被旧正文顶掉', e.start, '14:00');
+    eq('出勤: 自己的应答仍然并进来', e.rsvp.zDev.s, 'no');
   }
 
   /* ---------- 3. 同步 diff：别人带来的增改答删才 notify ---------- */
@@ -119,6 +136,19 @@ function mkEvent(id, ownerId, updatedAt, rsvp) {
       [['add', 'e4'], ['edit', 'e2'], ['rsvp', 'e3']].sort((x, y) => x[1].localeCompare(y[1])));
     const rsvpItem = seen[0].diff.filter((d) => d.kind === 'rsvp')[0];
     eq('diff: rsvp 带上应答人与选项', [rsvpItem.who, rsvpItem.st], ['b', 'yes']);
+    /* 远端只是答了出勤、本机那份正文更新（LWW 不吃远端）：这条新闻仍然要报出来 */
+    seen.length = 0;
+    await store.attach('D2', mkDoc('D2', { e1: mkEvent('e1', 'b', 900, { b: { s: 'no', t: 100 } }) }));
+    win.Dav.get = async () => ({
+      status: 200, etag: 'W/"d2"',
+      text: JSON.stringify(mkDoc('D2', {
+        e1: mkEvent('e1', 'b', 500, { b: { s: 'no', t: 100 }, c: { s: 'yes', t: 700 } }),
+      })),
+    });
+    await store.syncCode('D2');
+    eq('diff: 远端答题不靠 updatedAt 也能报出',
+      seen.length ? seen[0].diff.map((d) => [d.kind, d.who, d.st]) : [], [['rsvp', 'c', 'yes']]);
+    eq('diff: 本机较新的正文没被远端旧版顶掉', store.get('D2').events.e1.updatedAt, 900);
     /* 自己再改一条（本机身份写）：不算新闻 */
     seen.length = 0;
     store.addEvent('D1', { title: '我自己加的', date: '2026-10-02' });

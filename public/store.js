@@ -292,19 +292,22 @@
         out.push({ kind: 'add', id, title: e.title || '未命名日程', who: e.ownerId, t: e.updatedAt || Date.now() });
         continue;
       }
-      if ((e.updatedAt || 0) <= (p.t || 0)) continue;
-      const rsvpNow = JSON.stringify(e.rsvp || {});
-      if (String(p.title || '') === String(e.title || '') && rsvpNow !== String(p.rsvp || '{}')) {
-        /* 找出刚答的那个人（rsvp 里 t 最大的键）：who 是身份键，界面按成员表翻译成名字 */
-        let who = '', st = '', best = 0;
-        const r = e.rsvp || {};
-        for (const k in r) {
-          const t = r[k] && r[k].t ? r[k].t : 0;
-          if (t > best) { best = t; who = k; st = r[k].s || ''; }
-        }
-        out.push({ kind: 'rsvp', id, title: e.title || '未命名日程', who, st, t: e.updatedAt || Date.now() });
-      } else {
+      /* 出勤是逐键并集进来的、不抬 updatedAt，所以这道比对必须排在「时间戳没变就跳过」之前，
+         否则本机正文较新时，别人刚答的那一份就漏报了 */
+      const rsvpChanged = JSON.stringify(e.rsvp || {}) !== String(p.rsvp || '{}');
+      const edited = (e.updatedAt || 0) > (p.t || 0);
+      if (edited && !(String(p.title || '') === String(e.title || '') && rsvpChanged)) {
         out.push({ kind: 'edit', id, title: e.title || '未命名日程', who: e.ownerId, t: e.updatedAt || Date.now() });
+      } else if (rsvpChanged) {
+        /* who = 出勤里 t 最大、且不是本机身份的那个键；界面按成员表把它翻译成名字 */
+        const r = e.rsvp || {};
+        let who = '', st = '', best = -1;
+        Object.keys(r).forEach((k) => {
+          if (isMine(k, data)) return; // 自己答的不算新闻
+          const t = r[k] && r[k].t ? r[k].t : 0;
+          if (t > best) { best = t; who = k; st = (r[k] && r[k].s) || ''; }
+        });
+        if (who) out.push({ kind: 'rsvp', id, title: e.title || '未命名日程', who, st, t: e.updatedAt || Date.now() });
       }
     }
     for (const p of (prevList || [])) {
@@ -753,7 +756,6 @@
     setRsvp(code, id, status) {
       const c = loadLocal(code);
       if (!c.data || !c.data.events[id]) return false;
-      const s = stamp();
       mutate(code, (d) => {
         const e = d.events[id];
         if (!e) return;
@@ -761,8 +763,9 @@
         if (status) r[myId()] = { s: String(status), t: Date.now() };
         else delete r[myId()];
         if (Object.keys(r).length) e.rsvp = r; else delete e.rsvp;
-        e.updatedAt = Math.max(s.t, (e.updatedAt || 0) + 1);
-        e.by = s.by;
+        /* 绝不动 e.updatedAt / e.by：整条日程按 updatedAt 做 LWW，应答时抬时间戳等于让这台设备
+           的旧正文去顶掉别人刚改的标题时间。出勤只是多一个键，合并那边逐键并集已经收敛，
+           写回靠的是 mutate 标的 dirty，不靠时间戳 */
       });
       return true;
     },
