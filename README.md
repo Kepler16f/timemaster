@@ -3,7 +3,7 @@
 > 一个给家人和朋友共用的日程 App：建一个「空间」，把 8 位邀请码发给对方，彼此的日程、上班/休息标记就出现在同一张日历上。
 > **没有自建服务器，没有账号体系，没有月费** —— 数据就是一个 JSON 文件，放在你自己的坚果云（WebDAV）里。
 
-- 平台：Android 5.1+（minSdk 22，APK）与 HarmonyOS NEXT（API 12，HAP）
+- 平台：Android 5.1+（minSdk 22，APK）、HarmonyOS NEXT（API 12，HAP）与桌面（Windows/Linux，Tauri 2）
 - 版本：见 `public/app.js` 的 `APP_VERSION`；已发布的包在 [Releases](../../releases)
 - 包名：Android `com.timemaster.app`（历史原因保留，请勿修改，否则老设备无法覆盖安装）；HarmonyOS `top.timemaster.app`（自 v0.2.6 起，改名的代价见 CHANGELOG）
 
@@ -24,9 +24,12 @@
 一套 H5 代码承担全部业务逻辑，两端各套一层原生壳，只为了两件事：**发网络请求**和**读写系统日历**。
 
 ```
-public/  一套 H5（视图、CRDT 合并、WebDAV 客户端、ICS 解析）
+public/  一套 H5（视图、CRDT 合并、WebDAV 客户端、ICS 解析、农历/节假日）
   ├── 壳 A：Capacitor 6 (Android)      → NativeHttp(OkHttp) + AndroidCalendar(CalendarContract)
-  └── 壳 B：ArkWeb (HarmonyOS NEXT)    → HarmonyHttp(@ohos.net.http) + HarmonyCalendar(Calendar Kit)
+  │                                      + NativeNotify(通知) + NativeWidget(桌面小组件)
+  ├── 壳 B：ArkWeb (HarmonyOS NEXT)    → HarmonyHttp(@ohos.net.http) + HarmonyCalendar(Calendar Kit)
+  │                                      + Notification Kit + 服务卡片(Form)
+  └── 壳 C：Tauri 2 (Windows/Linux)    → ureq 原生转发 + 托盘 + 系统通知
 ```
 
 为什么网络必须走原生桥：坚果云 WebDAV 不返回 CORS 头，WebView 里的 `fetch` 直接被拦。`transport.js` 统一封装，浏览器里的 `fetch` 只作为本地开发的降级路径。
@@ -34,22 +37,29 @@ public/  一套 H5（视图、CRDT 合并、WebDAV 客户端、ICS 解析）
 ## 三、目录
 
 ```
-public/                 前端全部代码（两端壳共用）
+public/                 前端全部代码（三端壳共用）
   index.html style.css   视图与样式
-  app.js                 视图引擎（月/周/日三视图）、日程增删改、空间与设置
-  store.js               v2 数据模型 + 确定性合并引擎 + ETag 同步状态机 + 离线队列
+  app.js                 视图引擎（月/周/日/全部四视图）、日程增删改、空间与设置
+  store.js               v2 数据模型 + 确定性合并引擎 + ETag 同步状态机 + 离线队列 + 变更 diff
   dav.js                 WebDAV 客户端（发现、读写、删除文件）
-  ics.js                 .ics 解析与 RRULE 渲染期展开
+  ics.js                 .ics 解析与 RRULE 渲染期展开（含农历年重复）、VALARM 进出
+  lunar.js               农历换算（1901–2049），月历标注与农历生日展开的数据底座
+  holidays.js            法定节假日与调休（内置 2025/2026 国务院公告 + 可在线更新）
+  freetime.js            共同空闲计算（多成员忙碌区间取补集，纯函数）
   transport.js           原生网络桥统一入口（Capacitor / __HarmonyNative / fetch）
-  calbridge.js           系统日历读写桥
+  calbridge.js           系统日历读写桥（回写带提醒）
+  notify.js              变更系统通知桥（Android 插件 / 鸿蒙 / Tauri / Web Notification）
+  widget.js              桌面小组件数据推送（Android AppWidget / 鸿蒙服务卡片）
   auth.js                可选的邮箱验证码登录（Supabase GoTrue REST，零 SDK）
   update.js              应用内更新（仅 Android：检查 → 原生后台下载 → 唤起安装）
-android-shell/          Capacitor Android 工程 + 两个自定义插件
-harmony-shell/          DevEco 工程（ArkWeb + ArkTS 桥），CI 用命令行 hvigor 构建
-scripts/                sync-harmony-web.mjs（把 public/ 拷进 HAP 的 rawfile）
-tests/                  纯 Node 单元测试（核心逻辑 + 鸿蒙桥模拟）
+android-shell/          Capacitor Android 工程 + 自定义插件（HTTP/日历/更新/通知/小组件）
+harmony-shell/          DevEco 工程（ArkWeb + ArkTS 桥 + 服务卡片），CI 用命令行 hvigor 构建
+desktop-shell/          Tauri 2 工程（ureq 转发、托盘、系统通知、应用内更新）
+scripts/                sync-harmony-web.mjs / sync-desktop-web.mjs（把 public/ 拷进壳）
+tests/                  纯 Node 单元测试（核心逻辑 + 鸿蒙桥模拟 + 农历锚点 + 协作）
 server.js               历史遗留的零依赖 Node 后端，当前不参与发版
-.github/workflows/      android.yml / harmony.yml
+.github/workflows/      android.yml / harmony.yml / desktop.yml / release.yml
+PLAN.md                 v0.6.0 批次的开发规划与实施记录
 ROADMAP.md              设计与取舍的详细记录
 ```
 
@@ -109,12 +119,14 @@ ROADMAP.md              设计与取舍的详细记录
 ## 五、功能
 
 - **空间**：创建 / 邀请码加入 / 改名（创建者与管理员）/ 切换 / 快速切换列表 / 冷启动回到上次进入的空间 / 扫描网盘找回「成员表里有我」的空间（换设备、清过数据后用）/ 成员自行退出（弹窗确认，可选连自己名下的日程一起清掉）/ 创建者解散（别人下次进入时看到告知并自动退出，最后一个成员退出后网盘那份文档自动删）
-- **视图**：月（色块 + 当日日程卡列表 + 每人时间跨度轨）、周（7 列时间轴、重叠自动分栏）、日（单列时间轴 + 当前时间红线）；假勤标记（班/休）。月历格子里 **一个色块 = 一个人**（同一人当天几条只占一块，多条时块上拖一层影子），**块下的「N条」= 当天日程总条数**，**「+N」= 还有 N 个人没画下**（最多画 4 块）
-- **日程**：全天/定时、跨天、地点、备注、重复（每天/周/月/年，可选**每周哪几天、间隔 N 周、重复几次或直到某天**，含 BYDAY、BYMONTHDAY、INTERVAL、COUNT、UNTIL；网盘里仍只存一条原始事件，展开发生在渲染时）、按成员色筛选、批量删除
+- **视图**：月（色块 + 当日日程卡列表 + 每人时间跨度轨 + 农历/节假日标注）、周（7 列时间轴、重叠自动分栏）、日（单列时间轴 + 当前时间红线）、全部（多空间的日程叠一张月历，只读）；假勤标记（班/休，自动节假日为虚线角标）。月历格子里 **一个色块 = 一个人**（同一人当天几条只占一块，多条时块上拖一层影子），**块下的「N条」= 当天日程总条数**，**「+N」= 还有 N 个人没画下**（最多画 4 块）
+- **日程**：全天/定时、跨天、地点、备注、重复（每天/周/月/年，可选**每周哪几天、间隔 N 周、重复几次或直到某天**，含 BYDAY、BYMONTHDAY、INTERVAL、COUNT、UNTIL；「每年」可勾**按农历**——长辈的农历生日存一条原始事件，渲染期展开；闰月生日只在有同序闰月的年份出现）、**提醒**（准时/提前 10 分钟–1 天，经 .ics VALARM 与系统日历 Reminders 落地）、按成员色筛选、批量删除、**出勤应答（来/待定/不去，各答各的逐键合并）**
+- **约时间**：**找共同空闲**（选成员/范围/时段/最短时长 → 空档列表，点档期直接新建）；**空间动态**（本机记录「谁改了什么」，后台时弹系统通知，总开关在设置里）
 - **导入导出**：.ics 导入；**导出当前空间为 .ics**（浏览器与桌面端直接下载文件，安卓/鸿蒙的 WebView 不让应用存文件，那里弹层给全文一键复制）；与系统日历双向（Android CalendarContract / 鸿蒙 Calendar Kit），系统日程按 `sourceUid` 去重；读取时记下每条日程原本的**日历分组**（日历名 + 账户），导入弹窗按分组挑选，批量删除也按分组折叠整组勾选
 - **找回**：每次写回云端前，把覆盖掉的那一版留在本机（每空间 6 份、10 分钟内合一份、合计 3MB 环形，设置里默认打开的开关可关），设置-「查看 / 恢复本机快照」按时间列出，恢复只补现在不在了的日程
 - **成员**：昵称、标签色、设备身份（原生侧持久化，清缓存不换人）、可选邮箱账户（同一邮箱的多台设备并成一个用户，昵称冲突时问一句用哪个；**首次进入的那一页右侧就有「绑定邮箱」框（默认收起成一行，收起时也直接写着绑没绑），绑定成功后自动扫网盘把该邮箱加入过的空间找回并提示结果**）；成员面板按 创建者 → 管理员 → 成员 → 已退出 排序，显示各自名下的日程条数与加入日期；创建者可以给收管理员资格、能把管理员和普通成员都移出空间，管理员（非创建者）只能移出普通成员、创建者还能把某人指定为管理员。首页「切换空间」与设置-空间管理两边都有「成员」入口（看名单不算管理权限，只读也照样给看）
 - **其他**：深色模式（浅色/深色/跟随系统）、Android 应用内更新、横屏适配、页面切换与月历展开收起的过渡动效（`prefers-reduced-motion` 时全部不播）
+- **桌面与卡片**：Windows/Linux 系统托盘（左键唤起主窗口，菜单退出）；Android 桌面小组件与鸿蒙 2x2/2x4 服务卡片（显示今天剩下的日程与成员色，数据为最后一次打开应用时的快照）
 
 ## 六、构建与发布
 
@@ -154,7 +166,11 @@ node scripts/sync-harmony-web.mjs
 ## 八、已知限制
 
 - 鸿蒙端不支持应用内自装 HAP，设置页的更新入口在鸿蒙上不显示，需要到 Releases 手动签名安装。
+- 日程提醒走两条路：**系统通知**只在应用于后台时送达（无自建服务器做推送）；**开工提醒**依赖「回写系统日历」+ 日程上的提醒字段，由系统日历的闹钟负责——应用没开也能响，但只对回写过的日程生效。应用内后台轮询提醒（WorkManager/长驻）留待后续版本。
+- 鸿蒙 CalendarKit 的 `reminderTime` 字段在部分 SDK 版本上可能被静默忽略（提醒缺失但日程本身正常）；「准时提醒」这一档鸿蒙暂不支持。
+- 节假日调休数据内置 2025/2026 两年；之后的年份要等国务院公布（每年 11 月），在设置里在线更新，未收录年份只显示周六日与手工班/休。农历支持范围 1901–2049。
+- 桌面小组件/服务卡片显示的是最后一次打开应用时的快照，没有后台刷新。
 - 网盘同步是「整文件覆盖 + ETag 乐观锁」，空间成员很多（>20 人）或日程上万条时会有明显冲突重试。
-- 循环日程的 RRULE 只支持 FREQ/INTERVAL/BYDAY/BYMONTHDAY/UNTIL/COUNT，`COUNT` 的精确截断在展开时被忽略（以 UNTIL 与 400 次上限兜底）。
+- 循环日程的 RRULE 只支持 FREQ/INTERVAL/BYDAY/BYMONTHDAY/UNTIL/COUNT（含农历年重复），`COUNT` 的精确截断在展开时被忽略（以 UNTIL 与 400 次上限兜底）。
 - 邮箱登录是可选功能，未配置 Supabase 时完全不影响使用。
 - 浏览器不是产品形态：没有原生桥就没有网络与系统日历能力，仅用于调 UI。
