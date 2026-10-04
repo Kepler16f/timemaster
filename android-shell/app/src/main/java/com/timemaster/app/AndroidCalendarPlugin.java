@@ -210,8 +210,12 @@ public class AndroidCalendarPlugin extends Plugin {
                         effId = -1;
                     }
                 }
-                if (effId > 0) applyReminder(effId, ev.optInt("rem", -1));
-                ok++;
+                /* 只数真正落到日历上的：insert 失败（权限被收回、日历被删）也记一笔 ok，
+                   前端会据此以为回写成功并把这条日程当成「已在系统日历里」 */
+                if (effId > 0) {
+                    applyReminder(effId, ev.optInt("rem", -1));
+                    ok++;
+                }
             }
             // 删除已不在列表中的旧映射
             Map<String, ?> all = prefs.getAll();
@@ -261,7 +265,9 @@ public class AndroidCalendarPlugin extends Plugin {
                 call.reject("原日历里已找不到这条日程，可能已被删除");
                 return;
             }
-            applyReminder(sysId, ev.optInt("rem", -1));
+            /* 改的是别人日历里的日程：前端只有在用户真的选了提醒时才带 rem。
+               没带就什么也别动——按 -1 走一遍 applyReminder 会把这条日程原有的提醒抹掉。 */
+            if (ev.has("rem")) applyReminder(sysId, ev.optInt("rem", 0));
             JSObject ret = new JSObject();
             ret.put("updated", n);
             call.resolve(ret);

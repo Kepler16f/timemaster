@@ -70,6 +70,10 @@
       start: ev.start || '', end: ev.end || '',
       desc: ev.desc || '', location: ev.location || '',
     };
+    /* 只有用户在这条外来日程上明确选了提醒才带上这个字段。
+       导入时我们读不到原日历里已设的提醒，字段缺省 = 用户没动过提醒，
+       此时写 -1 等于把别人日历里那条日程原有的提醒抹掉。原生侧按「有没有带 rem」决定要不要动提醒表。 */
+    if (ev.rem != null && ev.rem >= 0) payload.rem = Math.max(0, Math.round(ev.rem));
     if (Cal) { await Cal.edit(payload); return true; }
     if (isHar()) { await Transport.harmonyCall('calEdit', [JSON.stringify(payload)]); return true; }
     return false;

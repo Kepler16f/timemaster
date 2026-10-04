@@ -161,6 +161,11 @@ const ok = (name, cond) => eq(name, !!cond, true);
   ok('cal: 写回原日历走 calEdit', await CalBridge.editSystemEvent(evs[0], 1e12));
   eq('cal: calEdit 收到条目编号与原日历', [editCalls[0].evId, editCalls[0].calDisp], ['11', '华为日历']);
   eq('cal: 自建的日程不写回系统日历', await CalBridge.editSystemEvent({ title: 'x', date: '2026-09-22' }, 0), false);
+  /* 写回外来日程时，提醒字段只在用户真的选了提醒才带上——
+     读不回原日历的提醒，就没资格替它写 -1（原生侧会把这条日程原有的提醒抹掉） */
+  eq('cal: 没选提醒就不带 rem 字段', 'rem' in editCalls[0], false);
+  await CalBridge.editSystemEvent(Object.assign({}, evs[0], { rem: 30 }), 1e12);
+  eq('cal: 选了提醒才带 rem', editCalls[1].rem, 30);
   /* 按分组导入（app.js 只把选中那几组交给 addEvents）：分组名要跟着日程存进空间文档，
      事后批量管理才按得回「整个日历」一组 */
   Store.addEvents('ABCD1234', [evs[0]], 'me');
