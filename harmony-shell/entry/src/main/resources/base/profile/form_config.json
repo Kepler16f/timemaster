@@ -5,6 +5,7 @@
       "displayName": "$string:widget_name",
       "description": "$string:widget_desc",
       "src": "./ets/widget/WidgetCard.ets",
+      "uiSyntax": "arkts",
       "window": {
         "designWidth": 720,
         "autoDesignWidth": true
