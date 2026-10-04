@@ -6,6 +6,7 @@
   const goneListeners = []; // 云端空间被创建者删除时的回调
   const kickedListeners = []; // 自己被空间管理员移出时的回调
   const dissolvedListeners = []; // 创建者解散了空间时的回调
+  const diffListeners = []; // 同步带来了别人（非本机身份）的变更：动态面板与系统通知都吃这份
   const cache = {}; // code -> { data, etag, dirty, seeds, syncing }
 
   function localKey(code) { return 'tm:space:' + code; }
@@ -85,6 +86,25 @@
       }
       for (const id in src.deletions) {
         out.deletions[id] = Math.max(out.deletions[id] || 0, src.deletions[id]);
+      }
+      /* rsvp 是「每人只答自己的到」：整事件 LWW 会把并发答题吃掉（两人同时点来/不来只剩一人），
+         所以在 LWW 胜者之上按字段收口——两版都有的键取 t 新者，只有一方有的原样保留。
+         只增不减、每键单写者，任意顺序合并都收敛到同一结果 */
+      for (const id in out.events) {
+        const a = (local.events && local.events[id]) || null;
+        const b = (remote.events && remote.events[id]) || null;
+        if (!a || !b) continue;
+        const ra = a.rsvp || {}, rb = b.rsvp || {};
+        const keys = Object.keys(ra).concat(Object.keys(rb));
+        if (!keys.length) continue;
+        const rsvp = {};
+        keys.forEach((k) => {
+          if (rsvp[k]) return;
+          const x = ra[k] || null, y = rb[k] || null;
+          const xt = x && x.t ? x.t : 0, yt = y && y.t ? y.t : 0;
+          rsvp[k] = xt >= yt ? x : (y || x);
+        });
+        out.events[id] = Object.assign({}, out.events[id], { rsvp });
       }
       /* 退休记录只增不删、且同一旧键的目标键必然一致（谁折叠谁写），直接取非空值 */
       for (const id in (src.retired || {})) {
@@ -255,6 +275,55 @@
   function notify(code) { listeners.forEach((fn) => fn(code)); }
   function onChange(fn) { listeners.push(fn); }
 
+  /* ---------- 远端变更 diff（动态面板 + 系统通知的数据源） ----------
+     只算「别人带来的」：本机身份写下的增删改界面本来就看得见，不算新闻。
+     rsvp 单独成一类：改的只是出勤，别在动态里冒充「更新了日程」。 */
+  function diffEvents(prevList, data) {
+    const out = [];
+    if (!data || !data.events) return out;
+    const prev = {};
+    (prevList || []).forEach((p) => { prev[p.id] = p; });
+    const mineEv = (e) => isMine(e.ownerId, data);
+    for (const id in data.events) {
+      const e = data.events[id];
+      if (mineEv(e)) continue;
+      const p = prev[id];
+      if (!p) {
+        out.push({ kind: 'add', id, title: e.title || '未命名日程', who: e.ownerId, t: e.updatedAt || Date.now() });
+        continue;
+      }
+      if ((e.updatedAt || 0) <= (p.t || 0)) continue;
+      const rsvpNow = JSON.stringify(e.rsvp || {});
+      if (String(p.title || '') === String(e.title || '') && rsvpNow !== String(p.rsvp || '{}')) {
+        /* 找出刚答的那个人（rsvp 里 t 最大的键）：who 是身份键，界面按成员表翻译成名字 */
+        let who = '', st = '', best = 0;
+        const r = e.rsvp || {};
+        for (const k in r) {
+          const t = r[k] && r[k].t ? r[k].t : 0;
+          if (t > best) { best = t; who = k; st = r[k].s || ''; }
+        }
+        out.push({ kind: 'rsvp', id, title: e.title || '未命名日程', who, st, t: e.updatedAt || Date.now() });
+      } else {
+        out.push({ kind: 'edit', id, title: e.title || '未命名日程', who: e.ownerId, t: e.updatedAt || Date.now() });
+      }
+    }
+    for (const p of (prevList || [])) {
+      if (data.events[p.id]) continue;
+      if (data.deletions && data.deletions[p.id]) {
+        out.push({ kind: 'del', id: p.id, title: p.title || '未命名日程', who: '', t: Date.now() });
+      }
+    }
+    return out;
+  }
+  /* 合并前的轻量快照：事件对象会被共享引用，merge 前只抄得出多少算多少 */
+  function snapshotEvents(data) {
+    if (!data || !data.events) return [];
+    return Object.keys(data.events).map((id) => ({
+      id, t: data.events[id].updatedAt || 0, title: data.events[id].title || '',
+      ownerId: data.events[id].ownerId, rsvp: JSON.stringify(data.events[id].rsvp || {}),
+    }));
+  }
+
   /* ---------- 写回前的本机快照 ----------
      网盘没有回收站，同步又是整篇文档覆盖：一次误删、一次写坏，除了墓碑什么都找不回来。
      所以每次准备把本机盖到云端之前，先把云端当前那一版留在本机，按空间环形存几份，
@@ -356,6 +425,7 @@
           if (c.dirty) pushSnapshot(code, r.text);
           const remoteMembers = Object.keys(remote.members || {});
           c.gone = 0;
+          const prevEvents = snapshotEvents(c.data); // 合并会复用事件对象，先抄一份薄快照再动
           c.data = c.data ? merge(c.data, remote) : remote;
           if (!c.data.members) c.data.members = {};
           if (!c.data.retired) c.data.retired = remote.retired || {};
@@ -382,6 +452,11 @@
           if (kicked !== c.kicked) { c.kicked = kicked; if (kicked) kickedListeners.forEach((fn) => fn(code)); }
           const dis = c.data.dissolved ? (c.data.dissolved.at || 1) : 0;
           if (dis !== c.dissolvedSeen) { c.dissolvedSeen = dis; if (dis) dissolvedListeners.forEach((fn) => fn(code)); }
+          /* 别人带来的变更只在活空间里算新闻：解散/清空的空间只剩告示功能 */
+          if (!dead) {
+            const diff = diffEvents(prevEvents, c.data);
+            if (diff.length) diffListeners.forEach((fn) => fn(code, diff));
+          }
         } else if (r.status === 404) {
           /* 云端文档不见了。要连续两轮（且本机没有待写入的改动）才判定「被创建者删除」——
              换网盘账号、改了目录、服务端抖动都会瞬时 404，第一轮就删本机副本太危险 */
@@ -673,6 +748,24 @@
       return dup.length;
     },
     /* patch 里值为 null 的键会被删除（例如把「重复」改回不重复） */
+    /* 应答出勤（来 / 不去 / 待定，null=清除）：每人只写自己的键，正文编辑权不受影响。
+       没进成员表也能答（答完 ensureMember 会把自己补回去） */
+    setRsvp(code, id, status) {
+      const c = loadLocal(code);
+      if (!c.data || !c.data.events[id]) return false;
+      const s = stamp();
+      mutate(code, (d) => {
+        const e = d.events[id];
+        if (!e) return;
+        const r = Object.assign({}, e.rsvp || {});
+        if (status) r[myId()] = { s: String(status), t: Date.now() };
+        else delete r[myId()];
+        if (Object.keys(r).length) e.rsvp = r; else delete e.rsvp;
+        e.updatedAt = Math.max(s.t, (e.updatedAt || 0) + 1);
+        e.by = s.by;
+      });
+      return true;
+    },
     updateEvent(code, id, patch) {
       const d = loadLocal(code).data;
       if (!d || !d.events[id]) return false;
@@ -970,6 +1063,9 @@
     },
     onKicked: (fn) => kickedListeners.push(fn),
     onDissolved: (fn) => dissolvedListeners.push(fn),
+    onDiff: (fn) => diffListeners.push(fn),
+    /* 纯函数暴露给测试与动态面板复用：prevList 由 snapshotEvents 产出 */
+    diffEvents,
     /* 早期导入系统日历时只把日历 id 写进了 sourceUid、没存名字：
        读系统日历既然能拿到 id→名字，就顺手补到这些日程上，按分组管理时它们不会挤进「未命名日历」一组 */
     tagSourceGroups(code, map) {
