@@ -374,6 +374,8 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // notify() 走 app.notification().builder()：插件没在这里注册就没有 managed state，第一条通知即 panic
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             /* 托盘：常驻入口。左键单击唤起主窗口，右键菜单给「显示 / 退出」。
                不劫持窗口的关闭按钮——点 ✕ 还是退出，习惯不被人替用户做主 */
