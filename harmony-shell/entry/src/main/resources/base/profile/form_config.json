@@ -10,6 +10,7 @@
         "autoDesignWidth": true
       },
       "colorMode": "light",
+      "isDefault": true,
       "isDynamic": true,
       "updateEnabled": true,
       "scheduledUpdateTime": "07:00",
