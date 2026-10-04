@@ -23,10 +23,10 @@ export default class EntryFormAbility extends FormExtensionAbility {
     EntryFormAbility.refreshForm(this.context, formId);
   }
 
-  onRemoveForm(want: Want): void {
-    const fid: string = EntryFormAbility.formIdOf(want);
-    if (fid.length > 0) {
-      EntryFormAbility.forgetForm(this.context, fid);
+  /* 基类签名是 formId（不是 want）：签名对不上整个类过不了 ArkTS 编译 */
+  onRemoveForm(formId: string): void {
+    if (formId.length > 0) {
+      EntryFormAbility.forgetForm(this.context, formId);
     }
   }
 

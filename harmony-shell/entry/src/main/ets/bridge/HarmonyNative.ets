@@ -127,9 +127,9 @@ export class HarmonyNative {
 
   private static async publishNotify(payloadJson: string): Promise<void> {
     const p = JSON.parse(payloadJson) as NotifyPayload;
+    /* 不写 tag：部分 SDK 版本的 NotificationRequest 类型没有这个字段，写了整个字面量过不了编译 */
     const request: notificationManager.NotificationRequest = {
       id: Math.floor(Math.random() * 99999) + 1,
-      tag: p.tag || 'reunion',
       content: {
         notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
         normal: { title: p.title || 'Reunion', text: p.body || '', additionalText: '' },
