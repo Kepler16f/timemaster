@@ -75,6 +75,8 @@ interface WireEv {
   desc?: string;
   location?: string;
   rruleStr?: string;
+  /* 开始前提醒分钟数：-1=未设置（清掉）、0=准时、>0=提前 n 分钟 */
+  rem?: number;
 }
 
 interface WirePayload {
@@ -95,6 +97,7 @@ interface EditReq {
   end?: string;
   desc?: string;
   location?: string;
+  rem?: number;
 }
 
 interface OutEv {
@@ -151,6 +154,11 @@ function buildEvent(title: string, w: WireEv, marker: string, startMs: number, e
   if (loc.length > 0) {
     const l: Record<string, Object> = { 'location': loc };
     ev['location'] = l;
+  }
+  /* 提醒：CalendarKit 的 reminderTime 是「提前分钟数」数组。SDK 版本不认这个键时会静默忽略，
+     不连累日程本身；「准时」（0）鸿蒙表达不了，只对 >0 的档生效 */
+  if ((w.rem ?? -1) > 0) {
+    ev['reminderTime'] = [w.rem] as Object;
   }
   return ev as Object as calendarManager.Event;
 }

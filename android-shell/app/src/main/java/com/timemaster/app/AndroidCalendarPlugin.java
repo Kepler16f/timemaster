@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.provider.CalendarContract;
 import android.provider.CalendarContract.Calendars;
 import android.provider.CalendarContract.Events;
+import android.provider.CalendarContract.Reminders;
 import android.provider.Settings;
 
 import androidx.core.app.ActivityCompat;
@@ -194,16 +195,22 @@ public class AndroidCalendarPlugin extends Plugin {
                 ContentValues cv = toValues(calId, ev, df, tzid);
                 if (cv == null) continue;
                 Long sysId = prefs.getLong("m:" + spaceId, -1);
+                long effId;
                 if (sysId > 0) {
                     getContext().getContentResolver().update(
                             ContentUris.withAppendedId(Events.CONTENT_URI, sysId), cv, null, null);
+                    effId = sysId;
                 } else {
                     Uri inserted = getContext().getContentResolver().insert(Events.CONTENT_URI, cv);
                     if (inserted != null) {
                         long newId = ContentUris.parseId(inserted);
                         prefs.edit().putLong("m:" + spaceId, newId).apply();
+                        effId = newId;
+                    } else {
+                        effId = -1;
                     }
                 }
+                if (effId > 0) applyReminder(effId, ev.optInt("rem", -1));
                 ok++;
             }
             // 删除已不在列表中的旧映射
@@ -254,6 +261,7 @@ public class AndroidCalendarPlugin extends Plugin {
                 call.reject("原日历里已找不到这条日程，可能已被删除");
                 return;
             }
+            applyReminder(sysId, ev.optInt("rem", -1));
             JSObject ret = new JSObject();
             ret.put("updated", n);
             call.resolve(ret);
@@ -294,6 +302,29 @@ public class AndroidCalendarPlugin extends Plugin {
     private long hhmm(String hm) {
         String[] p = hm.split(":");
         return (Long.parseLong(p[0]) * 60 + Long.parseLong(p[1])) * 60000L;
+    }
+
+    /**
+     * 事件开始前的提醒（分钟）：-1 = 不提醒（删掉已有提醒），0 = 准时，>0 = 提前 n 分钟。
+     * Reminders 是独立表：先删后插，保证换提醒/取消提醒都收口成一份。
+     */
+    private void applyReminder(long eventId, int minutes) {
+        if (minutes < 0) {
+            getContext().getContentResolver().delete(Reminders.CONTENT_URI,
+                    Reminders.EVENT_ID + "=?", new String[]{String.valueOf(eventId)});
+            return;
+        }
+        try {
+            getContext().getContentResolver().delete(Reminders.CONTENT_URI,
+                    Reminders.EVENT_ID + "=?", new String[]{String.valueOf(eventId)});
+            ContentValues cv = new ContentValues();
+            cv.put(Reminders.EVENT_ID, eventId);
+            cv.put(Reminders.MINUTES, minutes);
+            cv.put(Reminders.METHOD, Reminders.METHOD_ALERT);
+            getContext().getContentResolver().insert(Reminders.CONTENT_URI, cv);
+        } catch (Exception ignored) {
+            // 个别机型的 Reminders 写入限制：日程本身已写成功，提醒缺失不该连累整次同步
+        }
     }
 
     private boolean sameDay(long a, long b) {

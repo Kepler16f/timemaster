@@ -102,6 +102,8 @@
       allDay: !!ev.allDay, start: ev.start || '', end: ev.end || '',
       desc: desc, location: ev.location || '',
       rruleStr: ev.rrule ? IcsParser.rruleToString(ev.rrule) : '',
+      /* 提醒（开始前分钟数）：-1=未设置（清掉系统提醒）、0=准时、>0=提前 n 分钟 */
+      rem: ev.rem != null ? Math.max(0, Math.round(ev.rem)) : -1,
     };
   }
 

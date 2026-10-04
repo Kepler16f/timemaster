@@ -99,11 +99,16 @@
       <button type="button" class="seg-btn" data-val="month">月</button>
       <button type="button" class="seg-btn" data-val="week">周</button>
       <button type="button" class="seg-btn" data-val="day">日</button>
+      <button type="button" class="seg-btn hidden" data-val="all" title="全部空间的日程叠在一张月历上（只读）">全部</button>
     </div>
 
     <div class="people-bar" id="peopleBar">
       <span class="people-hint">成员：</span>
       <div class="people-tags" id="peopleTags"></div>
+      <div class="pb-actions">
+        <button id="freeBtn" class="pb-btn" title="找大家都有空的时段">⏱ 找空闲</button>
+        <button id="activityBtn" class="pb-btn" title="最近谁改了什么">🕘 动态</button>
+      </div>
     </div>
 
     <div class="cal-main" id="calMain">
@@ -210,6 +215,23 @@
         </div>
         <p class="set-note">网盘没有回收站，同步又是整篇文档覆盖。开着时每次写回前，本机先存下覆盖前的那一版：每个空间最多 <span id="snapMax">6</span> 份，十天半个月前删掉的那条也可能还在。<span id="snapStat"></span></p>
         <button class="big-btn ghost" id="snapBtn">🕰 查看 / 恢复本机快照</button>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">提醒与通知</div>
+        <div class="set-row">
+          <span class="set-sub">别人改日程时通知我</span>
+          <label class="set-inline" for="notifySw"><span>开</span><input type="checkbox" id="notifySw"></label>
+        </div>
+        <p class="set-note">应用在后台时，成员的新增/修改/应答会以系统通知提醒（前台不打扰）。日程本身的开工提醒请用「回写系统日历」+ 编辑日程里的「提醒」，由系统日历的闹钟负责——应用没开也能响。</p>
+      </div>
+
+      <div class="set-group">
+        <div class="set-title">节假日与农历</div>
+        <div class="set-row"><span>已收录年份</span><span class="set-val" id="holidayYears">—</span></div>
+        <p class="set-note" id="holidaySrcNote"></p>
+        <button class="big-btn ghost" id="holidayRefreshBtn">🔄 检查节假日数据更新</button>
+        <p class="set-note">内置 2025/2026 年国务院公告的放假与调休安排；之后的年份每年 11 月才公布，发布后在这里更新（联网时自动落到本机）。没收录的年份只显示周六日和手工标记的班/休。</p>
       </div>
 
       <div class="set-group" id="calGroup">
@@ -357,6 +379,17 @@
           <option value="rest">休（放假）</option>
         </select>
       </label>
+      <label>提醒
+        <select id="evRem">
+          <option value="none">不提醒</option>
+          <option value="0">准时提醒</option>
+          <option value="10">提前 10 分钟</option>
+          <option value="30">提前 30 分钟</option>
+          <option value="60">提前 1 小时</option>
+          <option value="120">提前 2 小时</option>
+          <option value="1440">提前 1 天</option>
+        </select>
+      </label>
       <label>重复
         <select id="evRepeat">
           <option value="none">不重复</option>
@@ -371,6 +404,10 @@
         <div class="row rep-days hidden" id="evRepDays">
           <span class="rep-cap">重复于</span>
           <div class="rep-wd" id="evWeekdays"></div>
+        </div>
+        <div class="row hidden" id="evLunarRow">
+          <span class="rep-cap">按农历</span>
+          <label class="checkbox"><input type="checkbox" id="evLunar" /> 每年同一农历日（生日用）</label>
         </div>
         <div class="row">
           <span class="rep-cap">间隔</span>
@@ -409,6 +446,7 @@
     <div class="modal">
       <div class="detail-head"><span class="dot" id="detailDot"></span><h3 id="detailTitle"></h3></div>
       <div id="detailMeta" class="detail-meta"></div>
+      <div id="detailRsvp" class="detail-rsvp hidden"></div>
       <p id="detailLockNote" class="set-note hidden">该日程由他人创建，仅创建者可删除。</p>
       <div class="modal-actions">
         <button id="detailClose" class="action-btn">关闭</button>
@@ -593,14 +631,73 @@
     </button>
   </nav>
 
+  <!-- ============ 共同空闲：选人 + 时段 → 大家都有空的档期 ============ -->
+  <div class="modal-mask" id="freeModal" hidden>
+    <div class="modal">
+      <h3>找共同空闲</h3>
+      <p class="import-tip">只统计普通日程的占用（班/休是标注不是占用；全天日程算占满一天）。点一个空档可以直接照着它新建日程。</p>
+      <div class="set-field">谁要有空
+        <div class="batch-list" id="freeMembers"></div>
+      </div>
+      <div class="row">
+        <label style="flex:1">从
+          <input type="date" id="freeFrom" />
+        </label>
+        <label style="flex:1">到
+          <input type="date" id="freeTo" />
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex:1">时段
+          <select id="freeWin">
+            <option value="8-22">08:00 – 22:00</option>
+            <option value="9-18">09:00 – 18:00</option>
+            <option value="0-24">全天</option>
+          </select>
+        </label>
+        <label style="flex:1">至少
+          <select id="freeMin">
+            <option value="30">30 分钟</option>
+            <option value="60" selected>1 小时</option>
+            <option value="120">2 小时</option>
+            <option value="180">3 小时</option>
+          </select>
+        </label>
+      </div>
+      <button class="big-btn" id="freeRun">🔍 计算空档</button>
+      <div class="batch-list" id="freeResults"></div>
+      <div class="modal-actions">
+        <button id="freeClose" class="action-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 空间动态：本机记下的「最近谁改了什么」 ============ -->
+  <div class="modal-mask" id="activityModal" hidden>
+    <div class="modal">
+      <h3>空间动态</h3>
+      <p class="import-tip">只记本机同步看到的变更，只存在这台设备上，不会写进网盘。</p>
+      <div class="batch-list" id="activityList"></div>
+      <div class="modal-actions">
+        <button id="activityClear" class="action-btn">清空</button>
+        <button id="activityClose" class="action-btn">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast"></div>
   <script src="transport.js"></script>
   <script src="ics.js"></script>
+  <script src="lunar.js"></script>
+  <script src="holidays.js"></script>
   <script src="dav.js"></script>
   <script src="store.js"></script>
   <script src="auth.js"></script>
   <script src="calbridge.js"></script>
   <script src="update.js"></script>
+  <script src="freetime.js"></script>
+  <script src="notify.js"></script>
+  <script src="widget.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

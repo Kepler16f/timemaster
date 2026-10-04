@@ -7,7 +7,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_notification::NotificationExt;
 
 /* ===== 原生桥：与安卓 Capacitor / 鸿蒙 __HarmonyNative 同构，web 侧只认 Transport 一套接口 ===== */
 
@@ -98,8 +101,7 @@ fn device_id(app: AppHandle) -> Result<String, String> {
 
 /* 打开外部链接（更新发布页）。只放 https、Command 直接传参不过 shell，链接再坏也注入不了命令 */
 #[tauri::command]
-fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://") {
+fn open_url(url: String) -> Result<(), String> {    if !url.starts_with("https://") {
         return Err("仅允许打开 https 链接".into());
     }
     #[cfg(windows)]
@@ -109,6 +111,18 @@ fn open_url(url: String) -> Result<(), String> {
     #[cfg(not(any(windows, target_os = "linux")))]
     let spawn: Result<std::process::Child, std::io::Error> = Err(std::io::Error::other("unsupported"));
     spawn.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/* 变更通知：走 tauri-plugin-notification（Windows 用系统通知中心，Linux 走 notify-rust）。
+   用自定义 command 而不是插件自己的 JS API——自定义 command 不过 ACL，capabilities 一行不用改 */
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| e.to_string())
 }
 
 /* ===== 应用内更新：下载安装包（多通道回退 + sha256 校验）→ 轮询进度 → 拉起安装器 ===== */
@@ -360,8 +374,48 @@ fn main() {
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .setup(|app| {
+            /* 托盘：常驻入口。左键单击唤起主窗口，右键菜单给「显示 / 退出」。
+               不劫持窗口的关闭按钮——点 ✕ 还是退出，习惯不被人替用户做主 */
+            let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().expect("应用图标未配置").clone())
+                .tooltip("Reunion · 共享日程")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.unminimize();
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.unminimize();
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .build(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
-            http_request, device_id, open_url,
+            http_request, device_id, open_url, notify,
             download_update, download_progress, cancel_download, install_update
         ])
         .run(tauri::generate_context!())

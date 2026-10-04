@@ -639,3 +639,52 @@ html.tm-desktop ::-webkit-scrollbar-track { background: transparent; }
   .modal-mask, .modal { animation: none; }
   .calendar.sizing, .month-toggle, .seg-btn, .tabbar .tab, .auth-bind > summary::after, .wd { transition: none; }
 }
+
+/* =====================================================================
+   ===== v0.6.0：农历 / 自动节假日 / RSVP / 动态 / 找空闲 / 聚合视图 =====
+   ===================================================================== */
+/* 月历格子：日期数字下面的一行小字——平日是农历日，法定假日换成节日名 */
+.cell-lunar { font-size: 9px; line-height: 1.2; color: var(--weak2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 600px) { .cell-lunar { font-size: 10.5px; } }
+html.tm-desktop .cell-lunar { font-size: 11px; }
+/* 自动节假日角标：虚线框 = 系统数据，实心块 = 成员手工标记 */
+.daymark.auto.work { background: transparent; color: var(--work-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--work-fg) 55%, transparent); }
+.daymark.auto.rest { background: transparent; color: var(--rest-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rest-fg) 55%, transparent); }
+/* 放假日的日期数字跟着周日一起红 */
+.cell.offday .date-num { color: var(--accent); }
+.cell.offday.today .date-num { color: #fff; }
+/* 时间轴表头的农历小字与节假日底色 */
+.tg-lunar { font-size: 9px; line-height: 1.2; color: var(--weak2); margin-top: 1px; }
+.tg-hcell.wide .tg-lunar { font-size: 10px; }
+.tg-hcell.hol-off { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); }
+.tg-hcell.hol-work { background: color-mix(in srgb, var(--work-bg) 65%, transparent); }
+/* 手机上周视图一列只有几十像素，农历小字放不下就不显示（日视图的 .wide 保留） */
+@media (max-width: 599px) { .tg-hcell:not(.wide) .tg-lunar { display: none; } }
+@media (orientation: landscape) and (max-height: 620px) { .tg-lunar { display: none; } .cell-lunar { display: none; } }
+
+/* 成员条右侧的工具按钮（找空闲 / 动态） */
+.pb-actions { display: flex; gap: 6px; flex: 0 0 auto; margin-left: auto; }
+.pb-btn { flex: 0 0 auto; border: 1px solid var(--line); background: var(--panel); color: var(--sub); font-size: 12px; padding: 4px 10px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
+.pb-btn:active { transform: scale(.96); }
+@media (hover: hover) and (pointer: fine) { .pb-btn:hover { border-color: var(--accent); color: var(--accent); } }
+
+/* 详情弹层的出勤区 */
+.detail-rsvp { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1.5px solid var(--tint-line); border-radius: 14px; background: var(--tint); }
+.detail-rsvp.hidden { display: none !important; }
+.rsvp-q { font-size: 13px; color: var(--sub); font-weight: 600; }
+.rsvp-btns { display: flex; gap: 8px; }
+.rsvp-btn { flex: 1; border: 1.5px solid var(--line); background: var(--card); color: var(--sub); font-size: 13.5px; padding: 9px 4px; border-radius: 11px; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.rsvp-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.rsvp-list { font-size: 12px; color: var(--text-weak); line-height: 1.6; }
+@media (hover: hover) and (pointer: fine) { .rsvp-btn:hover { border-color: var(--accent); color: var(--accent); } .rsvp-btn.on:hover { color: #fff; } }
+
+/* 聚合视图：日程卡上的空间徽章 */
+.ev-space { margin-top: 4px; display: inline-block; flex: 0 0 auto; }
+
+/* 共同空闲：空档行是按钮，点开即新建日程 */
+button.batch-row.ft-slot { width: 100%; cursor: pointer; border: 1.5px solid var(--tint-line); background: var(--card); }
+.ft-slot .batch-t { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--accent); }
+@media (hover: hover) and (pointer: fine) { .ft-slot:hover { border-color: var(--accent); } }
+
+/* 空间动态：时间列固定宽，正文让开 */
+.act-time { flex: 0 0 96px; font-size: 12px; color: var(--text-weak); font-variant-numeric: tabular-nums; }

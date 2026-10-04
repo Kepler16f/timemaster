@@ -1,0 +1,21 @@
+{
+  "forms": [
+    {
+      "name": "ReunionWidget",
+      "displayName": "$string:widget_name",
+      "description": "$string:widget_desc",
+      "src": "./ets/widget/WidgetCard.ets",
+      "window": {
+        "designWidth": 720,
+        "autoDesignWidth": true
+      },
+      "colorMode": "light",
+      "isDynamic": true,
+      "updateEnabled": true,
+      "scheduledUpdateTime": "07:00",
+      "updateDuration": 1,
+      "defaultDimension": "2*2",
+      "supportDimensions": ["2*2", "2*4"]
+    }
+  ]
+}

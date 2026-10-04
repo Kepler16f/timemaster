@@ -10,6 +10,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeHttpPlugin.class);
         registerPlugin(AndroidCalendarPlugin.class);
         registerPlugin(NativeUpdatePlugin.class);
+        registerPlugin(NativeNotifyPlugin.class);
+        registerPlugin(NativeWidgetPlugin.class);
         super.onCreate(savedInstanceState);
     }
 

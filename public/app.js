@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.5.1';
+const APP_VERSION = '0.6.0';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）
@@ -340,6 +340,8 @@ function openSettings(){
   showDeviceId();
   renderUpdate();
   syncSnapUI();
+  syncNotifySw();
+  syncHolidayUI();
   $('#appVersion').textContent='v'+APP_VERSION;
   showScreen('settingsScreen');
 }
@@ -965,6 +967,63 @@ async function notifyDissolved(code) {
 /* 同步时发现空间被解散：与「下次进入空间」共用上面那条告知 */
 Store.onDissolved(notifyDissolved);
 
+/* ---------- 变更通知 / 空间动态 / 小组件（吃同一份同步 diff） ----------
+   diff 只报「别人带来的」变更（store.js 算好）：本机记一份动态日志，
+   应用在后台时弹系统通知，日程变了顺手把桌面卡片刷一遍。 */
+const NOTIFY_KEY = 'tm:notifyOn';
+const notifyOn = () => localStorage.getItem(NOTIFY_KEY) !== '0';
+function syncNotifySw(){ const sw = $('#notifySw'); if (sw) sw.checked = notifyOn(); }
+$('#notifySw').onchange = (e) => { localStorage.setItem(NOTIFY_KEY, e.target.checked ? '1' : '0'); };
+
+const FEED_KEY = 'tm:feed', FEED_MAX = 120;
+function loadFeed(){ try { const a = JSON.parse(localStorage.getItem(FEED_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function saveFeed(a){ try { localStorage.setItem(FEED_KEY, JSON.stringify(a.slice(0, FEED_MAX))); } catch (e) { /* 动态不是关键数据，存不下就算了 */ } }
+const RSVP_ZH = { yes: '应邀', no: '婉拒', maybe: '待定' };
+function memberName(code, key){
+  const d = Store.get(code); if (!d || !key) return '';
+  const m = d.members[Store.resolve(d, key)] || d.members[key];
+  return m && m.name ? m.name : '';
+}
+function diffText(d, code){
+  const who = memberName(code, d.who);
+  if (d.kind === 'add') return (who || '有人') + ' 新增了「' + d.title + '」';
+  if (d.kind === 'edit') return (who || '有人') + ' 更新了「' + d.title + '」';
+  if (d.kind === 'rsvp') return (who || '有人') + ' ' + (RSVP_ZH[d.st] || '更新了出勤') + ' ·「' + d.title + '」';
+  return '删除了「' + d.title + '」';
+}
+Store.onDiff((code, diff) => {
+  const feed = loadFeed();
+  diff.forEach((d) => { feed.unshift({ code, kind: d.kind, id: d.id, title: d.title, who: d.who, st: d.st, t: d.t }); });
+  saveFeed(feed);
+  pushWidgetSoon(); // 日程变了，桌面卡片跟着换
+  /* 只有应用在后台才弹系统通知：前台用户看得见界面，弹窗反而是打扰 */
+  if (document.hidden && notifyOn()) {
+    const sp = Store.listSpaces().find((s) => s.code === code);
+    diff.slice(0, 3).forEach((d) => {
+      Notify.notify({ title: (sp ? sp.name : code) + ' · 日程有更新', body: diffText(d, code), tag: 'reunion-' + code });
+    });
+  }
+});
+
+/* ---------- 小组件推送：今天的剩余日程交给原生壳 ---------- */
+let widgetTimer = null;
+function pushWidgetSoon(){ clearTimeout(widgetTimer); widgetTimer = setTimeout(pushWidgetNow, 1200); }
+function pushWidgetNow(){
+  if (!window.Widget) return;
+  const out = { date: '', space: '', items: [] };
+  const data = state.code ? Store.get(state.code) : null;
+  if (data) {
+    const t = todayStr(), now = new Date(), nowMin = now.getHours() * 60 + now.getMinutes();
+    out.date = `${now.getMonth() + 1}月${now.getDate()}日 ${WD_ZH[now.getDay()]}`;
+    out.space = data.name || '共享日程';
+    out.items = splitMarks(occurrences(data, t, t)[t] || []).evs
+      .filter((e) => !isAllDay(e) && evEndMin(e) > nowMin)
+      .sort(sortByTime).slice(0, 4)
+      .map((e) => ({ time: e.start || '', title: e.title || '', color: (data.members[Store.resolve(data, e.ownerId)] || {}).color || '#888' }));
+  }
+  Widget.push(out);
+}
+
 /* ---------- 进入空间 ---------- */
 async function enterSpace(code){
   /* 成员记录上已经写着「被别人移出」的人，先把这条通知看完，别把一个没位置的空间当成正常使用 */
@@ -985,8 +1044,10 @@ async function enterSpace(code){
   $('#spaceName').textContent=data.name||'共享日程';
   $('#codeText').textContent=code;
   renderPeopleTags();
+  syncAllSegBtn();
   showScreen('calendarScreen'); /* 必须先显示：藏在 display:none 里量不到格子宽度，周视图的「今天置左」会算成 0 */
   renderCalendar(true); updateSyncChip();
+  pushWidgetSoon(); // 桌面卡片显示当前空间的今天
   Store.syncCode(code);
   startPolling();
 }
@@ -998,6 +1059,7 @@ function stopPolling(){ if(state.pollTimer){ clearInterval(state.pollTimer); sta
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && state.code) Store.syncCode(state.code).then(updateSyncChip); });
 Store.onChange((code)=>{ if(code===state.code){
   renderPeopleTags(); renderCalendar(); updateSyncChip(); renderRail();
+  pushWidgetSoon(); // 数据变了，桌面卡片跟着换
   const d=Store.get(code); if(d) $('#spaceName').textContent=d.name||'共享日程';
   if(!$('#settingsScreen').classList.contains('hidden')) renderSpaceMgmt();
 } });
@@ -1063,7 +1125,9 @@ function repeatText(r, short){
   if(!r || !r.freq) return '';
   const f = String(r.freq).toUpperCase();
   const iv = Math.max(1, parseInt(r.interval || 1, 10) || 1);
-  const parts = [ iv > 1 ? `每${iv}${REPEAT_UNIT[f] || ''}` : (REPEAT_ZH[f] || f) ];
+  const parts = [ f==='YEARLY' && r.lunar
+      ? (iv > 1 ? `每${iv}年（农历）` : '农历每年')
+      : (iv > 1 ? `每${iv}${REPEAT_UNIT[f] || ''}` : (REPEAT_ZH[f] || f)) ];
   if(f === 'WEEKLY' && r.byDay && r.byDay.length){
     parts.push(r.byDay.slice().sort((a,b)=>IcsParser.DAYMAP[a]-IcsParser.DAYMAP[b])
       .map((c)=>WD_ZH[IcsParser.DAYMAP[c]] || c).join('、'));
@@ -1114,36 +1178,60 @@ function splitMarks(list){
 }
 
 function renderCalendar(fresh){
-  const data=Store.get(state.code); if(!data) return;
+  const data = state.view === 'all' ? null : Store.get(state.code);
+  if (state.view !== 'all' && !data) return;
   const cal=$('#calendar'), ag=$('#agenda');
   cal.style.height=''; cal.classList.remove('sizing'); // 折叠动画跑到一半时切视图：固定高度别留在时间轴身上
   document.querySelectorAll('#viewSeg .seg-btn').forEach((b)=>b.classList.toggle('active', b.dataset.val===state.view));
+  syncAllSegBtn();
   cal.innerHTML=''; ag.innerHTML='';
-  $('#calMain').classList.toggle('with-agenda', state.view==='month');
-  $('#calMain').classList.toggle('tgrid-mode', state.view!=='month');
-  $('#addBtn').hidden = state.view==='month'; // 月视图用列表底部的「新建日程」，悬浮按钮不再压住内容
+  $('#calMain').classList.toggle('with-agenda', state.view==='month' || state.view==='all');
+  $('#calMain').classList.toggle('tgrid-mode', state.view!=='month' && state.view!=='all');
+  $('#addBtn').hidden = state.view==='month' || state.view==='all'; // 月/聚合视图用列表底部的「新建日程」，悬浮按钮不再压住内容
   $('#monthToggle').classList.toggle('hidden', state.view!=='month' || window.innerWidth>=600);
+  $('#peopleBar').classList.toggle('hidden', state.view==='all');
   if(fresh===true) state.monthCollapsed=false; // 切视图/换空间时回到展开态
   if(state.view==='month'){
     $('#weekHeader').hidden=false;
     cal.className='calendar month'+(state.monthCollapsed?' collapsed':'');
     renderMonth(data, cal);
     renderAgenda(data, ag);
+  }else if(state.view==='all'){
+    $('#weekHeader').hidden=false;
+    cal.className='calendar month';
+    renderAllMonth(cal);
+    renderAllAgenda(ag);
   }else{
     $('#weekHeader').hidden=true;
     renderTimeGrid(data, cal, state.view==='week'?weekDays(state.day):[state.day], fresh);
   }
   $('#monthToggle').classList.toggle('down', state.monthCollapsed); // 图标本身不换字，转 180° 才有连续感
-  $('#monthTitle').innerHTML = state.view==='month'
+  $('#monthTitle').innerHTML = state.view==='all'
+    ? '全部日程'
+    : (state.view==='month'
     ? escapeHtml(`${state.year}年${state.month}月`)
     : (state.view==='week'
         /* 区间太长会被顶栏挤断行，干脆自己拆：第一个日期和 – 一行，第二个日期一行 */
         ? (()=>{ const a=IcsParser.parseDate(weekDays(state.day)[0]), b=IcsParser.parseDate(weekDays(state.day)[6]);
                  return `${escapeHtml(`${a.getMonth()+1}月${a.getDate()}日 –`)}<span class="l2">${escapeHtml(`${b.getMonth()+1}月${b.getDate()}日`)}</span>`; })()
-        : (()=>{ const d=IcsParser.parseDate(state.day); return escapeHtml(`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`); })());
+        : (()=>{ const d=IcsParser.parseDate(state.day); return escapeHtml(`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`); })()));
 }
 
 /* ---------- 月视图：格子只放日期与成员色块，整月一屏 ---------- */
+/* 格子的农历与自动节假日标注：法定假日显示节日名，平日显示农历日；
+   自动「休/班」角标用虚线框，跟成员手工标记的实心块区分开 */
+function cellDecorate(cell, cd, ds, hasManualMark){
+  const hol = Holidays.get(ds);
+  if (hol && !hasManualMark) {
+    const dm = el('div', 'daymark auto ' + (hol.off ? 'rest' : 'work'), hol.off ? '休' : '班');
+    dm.title = hol.name + (hol.off ? '，放假' : '，调休上班');
+    cell.appendChild(dm);
+    if (hol.off) cell.classList.add('offday');
+  }
+  const lun = Lunar.solar2lunar(cd.getFullYear(), cd.getMonth() + 1, cd.getDate());
+  const label = hol && hol.off ? hol.name : (lun ? (lun.festival || lun.dayText) : '');
+  if (label) cell.appendChild(el('div', 'cell-lunar', label));
+}
 function renderMonth(data, cal){
   const first=new Date(state.year,state.month-1,1);
   const winFrom=new Date(first); winFrom.setDate(winFrom.getDate()-winFrom.getDay());
@@ -1160,6 +1248,7 @@ function renderMonth(data, cal){
     if(Math.floor(i/7)===selRow) cell.classList.add('keep');
     cell.appendChild(el('div','date-num',String(cd.getDate())));
     const {marks,evs}=splitMarks(byDay[ds]||[]);
+    cellDecorate(cell, cd, ds, !!marks.length);
     if(marks.length){ const dm=el('div','daymark '+marks[0].type, marks[0].type==='work'?'班':'休'); cell.appendChild(dm); }
     if(evs.length){
       /* 色块=「人」（一人一块，同一人当天几条只占一块），右上角数字=「条」，
@@ -1259,6 +1348,14 @@ function evCard(data, e, ds){
 }
 
 /* ---------- 日 / 周视图：时间轴网格，重叠日程分栏，当前时间红线 ---------- */
+/* 表头的农历/节假日小字：法定假日的名字替换农历日，调休上班日整格挂黄 */
+function decorateHead(cellEl, d, ds){
+  const hol = Holidays.get(ds);
+  const lun = Lunar.solar2lunar(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  const label = hol && hol.off ? hol.name : (lun ? (lun.festival || lun.dayText) : '');
+  if (label) cellEl.appendChild(el('div', 'tg-lunar', label));
+  if (hol) cellEl.classList.add(hol.off ? 'hol-off' : 'hol-work');
+}
 function renderTimeGrid(data, cal, days, fresh){
   cal.className='calendar tgrid';
   /* 列宽走 --tg-colw：手机上算成「一屏五格」，多出的两格横向滑出来。
@@ -1303,9 +1400,11 @@ function renderTimeGrid(data, cal, days, fresh){
       if(ds===tStr) c.appendChild(el('span','tdy','今天'));
       c.appendChild(el('span','dt',`${d.getMonth()+1}月${d.getDate()}日`));
       c.appendChild(el('span','wd',WD_ZH[d.getDay()]));
+      decorateHead(c, d, ds);
     } else {
       c.appendChild(el('div',null,WD_ZH[d.getDay()]));
       c.appendChild(el('div','dnum',String(d.getDate())));
+      decorateHead(c, d, ds);
     }
     c.onclick=()=>{ state.day=ds; if(state.dayView) setView('day'); };
     head.appendChild(c);
@@ -1478,9 +1577,9 @@ setInterval(()=>{ // 时间红线自己走，不必整页重绘
 },60000);
 
 /* ---------- 日程详情 ---------- */
-let detailEvent=null, detailDate=null;
+let detailEvent=null, detailDate=null, detailCode=null; // detailCode：日程所属空间（聚合视图里点开别人的日程时与 state.code 不同）
 function openDetail(ev, data, ds){
-  detailEvent=ev; detailDate=ds||ev.date;
+  detailEvent=ev; detailDate=ds||ev.date; detailCode=data.code||state.code;
   const owner=memberOf(data,ev.ownerId);
   $('#detailDot').style.background=owner.color;
   $('#detailTitle').textContent=ev.title;
@@ -1491,15 +1590,58 @@ function openDetail(ev, data, ds){
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
   if(ev.allDay || !ev.start) lines.push('全天');
   if(ev.rrule) lines.push(`重复：${repeatText(ev.rrule)}`);
+  if(ev.rem!=null && ev.rem>0) lines.push(`提醒：${remText(ev.rem)}`);
   if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
   if(ev.location) lines.push(`地点：${ev.location}`);
   if(ev.calDisp||ev.calAcct) lines.push(`来自日历：${ev.calDisp}${ev.calAcct?'（'+ev.calAcct+'）':''}`);
+  const d=IcsParser.parseDate(detailDate);
+  const lun=Lunar.solar2lunar(d.getFullYear(),d.getMonth()+1,d.getDate());
+  if(lun) lines.push(`农历：${lun.leap?'闰':''}${lun.monthText}${lun.dayText}（${lun.yearText}${lun.animal}年）`);
+  const hol=Holidays.get(detailDate);
+  if(hol) lines.push(`节假日：${hol.name}（${hol.off?'休':'调休上班'}）`);
   if(ev.desc) lines.push(`备注：${ev.desc}`);
   $('#detailMeta').innerHTML=lines.map(l=>`<div class="dm-row">${escapeHtml(l)}</div>`).join('');
+  renderDetailRsvp(ev, data, detailCode||state.code);
   $('#detailDelete').classList.toggle('hidden', !mine);
   $('#detailEdit').classList.toggle('hidden', !mine);
   $('#detailLockNote').classList.toggle('hidden', mine);
   $('#detailModal').hidden=false;
+}
+function remText(min){
+  min=Number(min)||0;
+  if(min===0) return '准时';
+  if(min>=1440) return '提前 '+Math.round(min/1440)+' 天';
+  if(min>=60) return '提前 '+(min%60 ? (min/60).toFixed(min%60?1:0) : min/60)+' 小时';
+  return '提前 '+min+' 分钟';
+}
+/* 出勤应答：任何人都能答自己那份（store 里按 clientId 逐键合并），正文编辑权照旧只归创建者 */
+function renderDetailRsvp(ev, data, code){
+  const box=$('#detailRsvp'); box.innerHTML='';
+  if(!ev || ev.type==='work' || ev.type==='rest'){ box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const r=ev.rsvp||{};
+  const meKey=Store.resolve(data,myId());
+  const cur=(r[meKey]||{}).s||'';
+  box.appendChild(el('div','rsvp-q','出个席：你能来吗？'));
+  const btns=el('div','rsvp-btns');
+  [['yes','🙋 来'],['maybe','🤔 待定'],['no','🙅 不去']].forEach(([v,t])=>{
+    const b=el('button','rsvp-btn'+(cur===v?' on':''),t); b.type='button';
+    b.onclick=()=>{
+      Store.setRsvp(code, ev.id, cur===v?null:v);
+      $('#detailModal').hidden=true;
+      toast('已记录出勤，稍后同步给成员');
+    };
+    btns.appendChild(b);
+  });
+  box.appendChild(btns);
+  const others=Object.keys(r).filter((k)=>k!==meKey);
+  if(others.length){
+    const txt=others.map((k)=>{
+      const m=data.members[Store.resolve(data,k)]||data.members[k]||{};
+      return (m.name||'成员')+' '+(RSVP_ZH[r[k].s]||r[k].s);
+    }).join(' · ');
+    box.appendChild(el('div','rsvp-list',txt));
+  }
 }
 $('#detailClose').onclick=()=>{ $('#detailModal').hidden=true; };
 $('#detailEdit').onclick=()=>{
@@ -1511,14 +1653,16 @@ $('#detailEdit').onclick=()=>{
 $('#detailDelete').onclick=async()=>{
   if(!detailEvent) return;
   if(!await uiConfirm('删除日程',`删除「${detailEvent.title}」？删除会同步给空间内所有成员。`,'删除')) return;
-  if(Store.deleteEvent(state.code, detailEvent.id)){ $('#detailModal').hidden=true; toast('已删除'); }
+  if(Store.deleteEvent(detailCode||state.code, detailEvent.id)){ $('#detailModal').hidden=true; toast('已删除'); }
   else toast('只有创建者可以删除这条日程');
 };
 
 /* ---------- 新建 / 编辑日程 ---------- */
 let editingEvent=null;
-function openEventModal(presetDate,ev){
+let editingCode=null; // 编辑的是哪个空间的日程（聚合视图/详情里可能不是当前空间）
+function openEventModal(presetDate,ev,pre){
   editingEvent=ev||null;
+  editingCode=ev?(detailCode||state.code):state.code;
   $('#eventModalTitle').textContent=ev?'编辑日程':'新建日程（归属于我）';
   $('#evTitle').value=ev?ev.title:'';
   $('#evDate').value=(ev?ev.date:null)||presetDate||state.day||todayStr();
@@ -1527,7 +1671,14 @@ function openEventModal(presetDate,ev){
   $('#evStart').value=(ev&&ev.start)||'09:00'; $('#evEnd').value=(ev&&ev.end)||'10:00';
   $('#evType').value=(ev&&ev.type)||'normal'; $('#evDesc').value=(ev&&ev.desc)||'';
   $('#evLocation').value=(ev&&ev.location)||'';
+  $('#evRem').value=(ev&&ev.rem!=null)?String(ev.rem):'none';
   fillRepeatForm(ev?ev.rrule:null);
+  /* 从共同空闲点进来：日期和时段都按选中的空档预填 */
+  if(pre){
+    $('#evAllDay').checked=false;
+    $('#timeRow').style.display='flex';
+    $('#evStart').value=pre.start||'09:00'; $('#evEnd').value=pre.end||'10:00';
+  }
   $('#eventModal').hidden=false;
 }
 $('#eventCancel').onclick=()=>{ $('#eventModal').hidden=true; editingEvent=null; };
@@ -1546,6 +1697,7 @@ function syncRepeatRows(){
   const f=$('#evRepeat').value, end=$('#evRepEnd').value;
   $('#evRepMore').classList.toggle('hidden',f==='none');
   $('#evRepDays').classList.toggle('hidden',f!=='weekly');
+  $('#evLunarRow').classList.toggle('hidden',f!=='yearly');
   $('#evIntervalUnit').textContent=REPEAT_UNIT[f.toUpperCase()]||'';
   $('#evRepCountRow').classList.toggle('hidden',end!=='count');
   $('#evRepUntilRow').classList.toggle('hidden',end!=='until');
@@ -1576,9 +1728,10 @@ function repeatFromForm(){
   const f=$('#evRepeat').value.toUpperCase();
   if(f==='NONE') return null;
   const r={ freq:f, interval:Math.min(30,Math.max(1,parseInt($('#evInterval').value,10)||1)),
-    byDay:null, byMonthDay:keepRepByMonthDay, count:null, until:null };
+    byDay:null, byMonthDay:keepRepByMonthDay, count:null, until:null, lunar:null };
   if(f!=='MONTHLY') r.byMonthDay=null;
   if(f==='WEEKLY'){ const d=pickedWeekdays(); if(d.length) r.byDay=d; }
+  if(f==='YEARLY' && $('#evLunar').checked) r.lunar=true; else delete r.lunar;
   const end=$('#evRepEnd').value;
   if(end==='count') r.count=Math.min(999,Math.max(1,parseInt($('#evRepCount').value,10)||1));
   else if(end==='until') r.until=$('#evRepUntil').value||null;
@@ -1593,6 +1746,7 @@ function fillRepeatForm(r){
   $('#evRepEnd').value=r&&r.count?'count':(r&&r.until?'until':'never');
   $('#evRepCount').value=(r&&r.count)||10;
   $('#evRepUntil').value=r?IcsParser.untilStr(r.until)||'':'';
+  $('#evLunar').checked=!!(r&&r.lunar);
   setWeekdays(r?r.byDay:null);
   syncRepeatRows();
 }
@@ -1601,29 +1755,34 @@ $('#eventSave').onclick=async()=>{
   const allDay=$('#evAllDay').checked;
   const rrule=repeatFromForm();
   if(rrule&&rrule.until&&rrule.until<date) return toast('「直到某天」要晚于开始日期');
+  const remVal=$('#evRem').value;
   const ev={
     title:$('#evTitle').value.trim()||'未命名日程', date,
     allDay, start:allDay?'':$('#evStart').value,
     end:allDay?'':$('#evEnd').value, type:$('#evType').value, desc:$('#evDesc').value,
     location:$('#evLocation').value.trim(),
     rrule,
+    rem: remVal==='none' ? null : Number(remVal),
   };
   if(allDay) ev.endDate=null;
   let ok=true;
   let sysBack=null;
   if(editingEvent){
     if(date!==editingEvent.date) ev.endDate=null; // 改了日期，原来的多天区间不再成立
-    ok=Store.updateEvent(state.code, editingEvent.id, ev);
+    ok=Store.updateEvent(editingCode||state.code, editingEvent.id, ev);
     /* 从系统日历导入的日程：改动要回到它原来所在的那个日历，改前先逐条确认，且永不删除 */
     if(ok && CalBridge.sysHandle(editingEvent.sourceUid)){
       sysBack={ before:editingEvent, after:Object.assign({}, editingEvent, ev) };
     }
   } else {
-    Store.addEvent(state.code, ev);
+    const ev2=Object.assign({}, ev); delete ev2.rem; // 新建时没选提醒就不落 rem 键，云端少一个字段
+    if(ev.rem!=null) ev2.rem=ev.rem;
+    Store.addEvent(editingCode||state.code, ev2);
   }
   state.day=date; syncYm();
-  editingEvent=null;
+  editingEvent=null; editingCode=null;
   $('#eventModal').hidden=true; toast(ok?'已保存，稍后自动同步':'只有创建者可以编辑这条日程');
+  pushWidgetSoon();
   if(sysBack) await syncBackToSystemCalendar(sysBack.before, sysBack.after);
 };
 
@@ -1855,6 +2014,212 @@ $('#snapClear').onclick=async()=>{
   Store.snaps.clear(state.code); renderSnapList(); syncSnapUI(); toast('已清空');
 };
 
+/* ---------- 聚合视图：全部空间的日程叠在一张月历上（只读） ----------
+   只读本机缓存（Store.get），不触发同步、不动 state.code——同步逻辑一行不改 */
+function allSpacesData(){
+  return Store.listSpaces().map((s)=>({ code:s.code, name:s.name||'共享空间', data:Store.get(s.code) }))
+    .filter((x)=>x.data && !x.data.dissolved);
+}
+function syncAllSegBtn(){
+  const b=document.querySelector('#viewSeg [data-val="all"]');
+  if(!b) return;
+  b.classList.toggle('hidden', allSpacesData().length<2);
+  if(allSpacesData().length<2 && state.view==='all'){ state.view='month'; localStorage.setItem(VIEW_KEY,'month'); }
+}
+function allOccurrences(fromStr,toStr){
+  const byDay={};
+  allSpacesData().forEach((sp)=>{
+    Object.keys(sp.data.events).forEach((id)=>{
+      const ev=sp.data.events[id];
+      IcsParser.expandOccurrences(ev, fromStr, toStr).forEach((ds)=>{ (byDay[ds]=byDay[ds]||[]).push({ ev, sp }); });
+    });
+  });
+  return byDay;
+}
+function renderAllMonth(cal){
+  const first=new Date(state.year,state.month-1,1);
+  const winFrom=new Date(first); winFrom.setDate(winFrom.getDate()-winFrom.getDay());
+  const winTo=new Date(winFrom); winTo.setDate(winTo.getDate()+41);
+  const byDay=allOccurrences(IcsParser.dstr(winFrom), IcsParser.dstr(winTo));
+  const tStr=todayStr();
+  const selIdx=Math.round((IcsParser.parseDate(state.day)-winFrom)/86400000);
+  const selRow=Math.max(0,Math.min(5,Math.floor(selIdx/7)));
+  for(let i=0;i<42;i++){
+    const cd=new Date(winFrom); cd.setDate(winFrom.getDate()+i);
+    const ds=IcsParser.dstr(cd);
+    const cell=el('div','cell'+(cd.getMonth()!==state.month-1?' other':'')+(ds===tStr?' today':'')+(ds===state.day?' sel':''));
+    if(Math.floor(i/7)===selRow) cell.classList.add('keep');
+    cell.appendChild(el('div','date-num',String(cd.getDate())));
+    const list=byDay[ds]||[];
+    cellDecorate(cell, cd, ds, list.some((x)=>x.ev.type==='work'||x.ev.type==='rest'));
+    if(list.length){
+      const people=[]; const byId={};
+      list.forEach(({ev,sp})=>{
+        const oid=Store.resolve(sp.data,ev.ownerId);
+        if(byId[oid+'|'+sp.code]){ byId[oid+'|'+sp.code].n++; return; }
+        byId[oid+'|'+sp.code]={ id:oid, sp, n:1, color:(sp.data.members[oid]||{}).color||'var(--weak2)' };
+        people.push(byId[oid+'|'+sp.code]);
+      });
+      const dots=el('div','dots');
+      people.slice(0,4).forEach((p)=>{
+        const d=el('span','mdot'+(p.n>1?' many':'')); d.style.background=p.color;
+        d.title=((p.sp.data.members[p.id]||{}).name||'未知')+' · '+p.sp.name;
+        dots.appendChild(d);
+      });
+      if(people.length>4) dots.appendChild(el('span','mdot more','+'+(people.length-4)));
+      cell.appendChild(dots);
+      if(list.length>1) cell.appendChild(el('div','cell-cnt',list.length+'条'));
+      cell.title=list.map(({ev,sp})=>((sp.data.members[Store.resolve(sp.data,ev.ownerId)]||{}).name||'未知')+'（'+sp.name+'）· '+ev.title).join('\n');
+    }
+    cell.onclick=()=>{ state.day=ds; syncYm(); renderCalendar(); };
+    cal.appendChild(cell);
+  }
+}
+function renderAllAgenda(box){
+  const ds=state.day, d=IcsParser.parseDate(ds);
+  const list=(allOccurrences(ds,ds)[ds]||[]);
+  const {marks,evs}=splitMarks(list.map((x)=>x.ev));
+  box.className='agenda';
+  const head=el('div','ag-head');
+  head.appendChild(el('div','ag-date',`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`));
+  head.appendChild(el('div','ag-sub',`全部空间 · ${evs.length} 条日程`));
+  box.appendChild(head);
+  if(!list.length) box.appendChild(el('p','ag-empty','这一天所有空间都没有日程。'));
+  const cardOf=(e)=>{
+    const it=list.find((x)=>x.ev===e); if(!it) return null;
+    const card=evCard(it.sp.data, e, ds);
+    const chip=el('span','badge ev-space',it.sp.name);
+    card.querySelector('.ec-main').appendChild(chip);
+    return card;
+  };
+  marks.forEach((e)=>{ const c=cardOf(e); if(c) box.appendChild(c); });
+  evs.forEach((e)=>{ const c=cardOf(e); if(c) box.appendChild(c); });
+  const cur=Store.get(state.code);
+  const btn=el('button','big-btn ghost ag-new','＋ 在「'+((cur&&cur.name)||'当前空间')+'」新建日程');
+  btn.onclick=()=>openEventModal(ds);
+  box.appendChild(btn);
+}
+
+/* ---------- 共同空闲：选人 + 时段 → 大家都有空的档期 ---------- */
+function freeSpaces(){
+  if(state.view==='all'){
+    return allSpacesData().map((sp)=>({ code:sp.code, name:sp.name, data:sp.data,
+      members:Object.keys(sp.data.members).filter((id)=>!sp.data.members[id].out) }));
+  }
+  const data=state.code?Store.get(state.code):null;
+  if(!data) return [];
+  return [{ code:state.code, name:data.name||'共享空间', data,
+    members:Object.keys(data.members).filter((id)=>!data.members[id].out) }];
+}
+function fmtDur(m){
+  m=Number(m)||0;
+  if(m>=60){ const h=Math.floor(m/60), r=m%60; return h+' 小时'+(r?' '+r+' 分':''); }
+  return m+' 分钟';
+}
+function openFreeModal(){
+  if(!state.code) return toast('请先进入一个空间');
+  const box=$('#freeMembers'); box.innerHTML='';
+  const spaces=freeSpaces();
+  if(!spaces.length) return toast('还没有可用的空间数据');
+  spaces.forEach((sp)=>{
+    sp.members.forEach((id)=>{
+      const m=sp.data.members[id]||{};
+      const row=el('div','batch-row');
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=true;
+      cb.dataset.key=sp.code+'|'+id;
+      const dot=el('span','dot'); dot.style.background=m.color||'#999';
+      row.appendChild(cb); row.appendChild(dot);
+      const label=(sp.name||'')+(spaces.length>1?' · ':'')+ (m.name||'成员') + (Store.owns(id,sp.data)?'（我）':'');
+      row.appendChild(el('span','batch-t',label));
+      box.appendChild(row);
+    });
+  });
+  const today=todayStr();
+  const to=new Date(); to.setDate(to.getDate()+13);
+  $('#freeFrom').value=today; $('#freeTo').value=IcsParser.dstr(to);
+  $('#freeResults').innerHTML='<p class="import-tip">选好人、点「计算空档」。</p>';
+  $('#freeModal').hidden=false;
+}
+$('#freeBtn').onclick=openFreeModal;
+$('#freeRun').onclick=()=>{
+  const sel=[...document.querySelectorAll('#freeMembers input:checked')].map((c)=>c.dataset.key.split('|'));
+  if(!sel.length) return toast('至少选一个人');
+  const from=$('#freeFrom').value||todayStr();
+  const to=$('#freeTo').value||from;
+  if(to<from) return toast('「到」要晚于「从」');
+  const win=$('#freeWin').value.split('-').map(Number);
+  const list=freeSpaces()
+    .map((sp)=>({ data:sp.data, members:sel.filter(([c])=>c===sp.code).map(([,id])=>id) }))
+    .filter((x)=>x.members.length);
+  const r=FreeTime.slots(list,{ from, to, dayStart:win[0]*60, dayEnd:win[1]*60, minDur:Number($('#freeMin').value)||60 });
+  const box=$('#freeResults'); box.innerHTML='';
+  let n=0;
+  r.forEach((day)=>{
+    if(!day.slots.length) return;
+    const d=IcsParser.parseDate(day.date);
+    const hol=Holidays.get(day.date);
+    const head=el('div','batch-group');
+    head.appendChild(el('span','batch-t',`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}${hol?' · '+hol.name+(hol.off?'（休）':'（班）'):''}`));
+    box.appendChild(head);
+    day.slots.forEach((s)=>{
+      n++;
+      const row=el('button','batch-row ft-slot'); row.type='button';
+      row.appendChild(el('span','batch-t',`${s.s} – ${s.e}`));
+      row.appendChild(el('span','ig-cnt','共 '+fmtDur(s.eMin-s.sMin)));
+      row.onclick=()=>{
+        $('#freeModal').hidden=true;
+        state.day=day.date; syncYm(); renderCalendar(true);
+        openEventModal(day.date, null, { start:s.s, end:s.e });
+      };
+      box.appendChild(row);
+    });
+  });
+  if(!n) box.appendChild(el('p','import-tip','这个范围里没有共同空档——试试放宽时段、缩短最短时长，或少选几个人。'));
+};
+$('#freeClose').onclick=()=>{ $('#freeModal').hidden=true; };
+
+/* ---------- 空间动态 ---------- */
+$('#activityBtn').onclick=()=>{ renderActivity(); $('#activityModal').hidden=false; };
+function renderActivity(){
+  const box=$('#activityList'); box.innerHTML='';
+  const feed=loadFeed().filter((f)=>!state.code||f.code===state.code);
+  if(!feed.length){
+    box.appendChild(el('p','import-tip','最近还没有变更记录。成员增删改日程、应答出勤之后，这里会出现一行行「谁做了什么」。'));
+    return;
+  }
+  feed.slice(0,60).forEach((f)=>{
+    const row=el('div','batch-row');
+    const t=new Date(f.t);
+    const hm=String(t.getHours()).padStart(2,'0')+':'+String(t.getMinutes()).padStart(2,'0');
+    row.appendChild(el('span','act-time',`${t.getMonth()+1}月${t.getDate()}日 ${hm}`));
+    row.appendChild(el('span','batch-t',diffText(f,f.code)));
+    box.appendChild(row);
+  });
+}
+$('#activityClose').onclick=()=>{ $('#activityModal').hidden=true; };
+$('#activityClear').onclick=async()=>{
+  if(!await uiConfirm('清空动态','只清本机的这份记录，日程数据不动。','清空')) return;
+  saveFeed([]); renderActivity(); toast('已清空');
+};
+
+/* ---------- 节假日与农历（设置页） ---------- */
+function syncHolidayUI(){
+  const ys=Holidays.years();
+  $('#holidayYears').textContent=ys.length?ys.map(String).join(' / '):'—';
+  const cur=new Date().getFullYear();
+  $('#holidaySrcNote').textContent='今年的数据来源：'+(Holidays.sourceLabel(cur)||'未收录（只显示周六日与手工班/休）');
+}
+$('#holidayRefreshBtn').onclick=async()=>{
+  const btn=$('#holidayRefreshBtn');
+  btn.disabled=true; const old=btn.textContent; btn.textContent='正在检查…';
+  try{
+    const r=await Holidays.refresh();
+    toast(r.saved.length ? '已更新 '+r.saved.join('、')+' 年的节假日数据'
+      : (r.failed.length ? '没有拿到新数据（离线，或来年的安排还没公布）' : '数据已是最新'));
+    syncHolidayUI();
+  } finally { btn.disabled=false; btn.textContent=old; }
+};
+
 /* ---------- 应用内更新：安卓/鸿蒙走原生插件，桌面端走 Tauri 下载 + 应用内弹层 ---------- */
 let updInfo = null;
 let updBusy = false;
@@ -2014,7 +2379,7 @@ async function autoCheckUpdate(){
 $('#myName').oninput=onNameInput;
 $('#addBtn').onclick=()=>openEventModal(state.day);
 function navStep(n){
-  if(state.view==='month'){
+  if(state.view==='month' || state.view==='all'){
     const d=IcsParser.parseDate(state.day), want=d.getDate();
     d.setDate(1); d.setMonth(d.getMonth()+n);
     d.setDate(Math.min(want, new Date(d.getFullYear(),d.getMonth()+1,0).getDate())); // 31 日翻到短月夹到月末
@@ -2030,7 +2395,7 @@ $('#todayBtn').onclick=()=>{ state.day=todayStr(); syncYm(); renderCalendar(true
 
 /* ---------- 启动：除首次安装外，直接回到最近一次进入的空间 ---------- */
 async function boot(){
-  applyTheme(); showDeviceId(); renderUpdate(); syncAutoUpd(); syncDayView();
+  applyTheme(); showDeviceId(); renderUpdate(); syncAutoUpd(); syncDayView(); syncAllSegBtn(); syncNotifySw();
   /* 桌面端系统日历对接暂缓：整组隐藏，别留一个点了只会报错的按钮 */
   if (isDesktopShell()) $('#calGroup').hidden = true;
   const last=localStorage.getItem('tm:lastSpace'), cfg=Dav.cfg();

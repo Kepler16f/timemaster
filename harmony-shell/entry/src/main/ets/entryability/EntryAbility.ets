@@ -1,5 +1,6 @@
 import { AbilityConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
+import { notificationManager } from '@kit.NotificationKit';
 import { HarmonyNative } from '../bridge/HarmonyNative';
 
 export default class EntryAbility extends UIAbility {
@@ -11,6 +12,15 @@ export default class EntryAbility extends UIAbility {
     HarmonyNative.i().bindCtx(this.context);
     windowStage.loadContent('pages/Index');
     this.enableImmersive(windowStage);
+    this.askNotification();
+  }
+
+  /* 首次使用问一次通知开关（拒绝也不影响主流程，只是收不到变更提醒） */
+  private askNotification(): void {
+    try {
+      notificationManager.requestEnableNotification(this.context).catch(() => {});
+    } catch (e) {
+    }
   }
 
   /* 沉浸式：窗口铺满状态栏与导航条，避让区高度经 AppStorage 交给页面转成 CSS 变量 */

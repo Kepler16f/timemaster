@@ -2,8 +2,16 @@ import { webview } from '@kit.ArkWeb';
 import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
+import { notificationManager } from '@kit.NotificationKit';
+import { formProvider, formBindingData } from '@kit.FormKit';
 import { HarmonyHttp } from './HarmonyHttp';
 import { HarmonyCalendar } from './HarmonyCalendar';
+
+interface NotifyPayload {
+  title?: string;
+  body?: string;
+  tag?: string;
+}
 
 export class HarmonyNative {
   private static readonly inst: HarmonyNative = new HarmonyNative();
@@ -107,6 +115,58 @@ export class HarmonyNative {
     HarmonyNative.readDeviceId(ctx)
       .then((v: string) => this.reply(id, null, '{"id":' + JSON.stringify(v) + '}'))
       .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
+  /* ===== 变更通知：网页同步发现成员的增删改/应答后调这里发系统通知 =====
+     通知总开关由系统管理（EntryAbility 启动时问过一次），被关掉时 publish 报错，静默即可 */
+  notify(id: string, payloadJson: string): void {
+    HarmonyNative.publishNotify(payloadJson)
+      .then(() => this.reply(id, null, '{}'))
+      .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
+  private static async publishNotify(payloadJson: string): Promise<void> {
+    const p = JSON.parse(payloadJson) as NotifyPayload;
+    const request: notificationManager.NotificationRequest = {
+      id: Math.floor(Math.random() * 99999) + 1,
+      tag: p.tag || 'reunion',
+      content: {
+        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+        normal: { title: p.title || 'Reunion', text: p.body || '', additionalText: '' },
+      },
+    };
+    await notificationManager.publish(request);
+  }
+
+  /* ===== 服务卡片数据：先落偏好，再把当前在线的 formId 逐个刷新 =====
+     formId 由 EntryFormAbility.onAddForm 记进同一份偏好；卡片全删光时列表为空，只存快照 */
+  widgetData(id: string, payloadJson: string): void {
+    const ctx = this.ctx;
+    if (ctx === null) {
+      this.reply(id, '上下文未就绪', null);
+      return;
+    }
+    HarmonyNative.pushWidget(ctx, payloadJson)
+      .then(() => this.reply(id, null, '{}'))
+      .catch((e: Error) => this.reply(id, e.message, null));
+  }
+
+  private static async pushWidget(ctx: common.UIAbilityContext, payloadJson: string): Promise<void> {
+    const store = await preferences.getPreferences(ctx, 'reunion_widget');
+    await store.put('payload', payloadJson);
+    await store.flush();
+    const ids: string[] = String(await store.get('formIds', '')).split(',').filter((s: string) => s.length > 0);
+    if (ids.length === 0) {
+      return;
+    }
+    const data: Record<string, Object> = JSON.parse(payloadJson) as Record<string, Object>;
+    for (const fid of ids) {
+      try {
+        await formProvider.updateForm(fid, formBindingData.createFormBindingData(data));
+      } catch (e) {
+        /* 卡片已被移除：formId 失效是正常情况，跳过即可 */
+      }
+    }
   }
 
   private static newId(): string {

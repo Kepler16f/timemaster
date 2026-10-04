@@ -8,6 +8,21 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    /* 服务卡片：ReunionWidget（2x2/2x4），数据由 EntryFormAbility 按 formId 维护 */
+    "extensionAbilities": [
+      {
+        "name": "EntryFormAbility",
+        "srcEntry": "./ets/form/EntryFormAbility.ets",
+        "type": "form",
+        "exported": true,
+        "metadata": [
+          {
+            "name": "ohos.extension.form",
+            "resource": "$profile:form_config"
+          }
+        ]
+      }
+    ],
     "abilities": [
       {
         "name": "EntryAbility",

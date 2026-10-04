@@ -40,7 +40,8 @@ struct Index {
       HarmonyNative.i().bindWeb(this.controller);
       this.controller.registerJavaScriptProxy(
         HarmonyNative.i(), '__HarmonyNative',
-        ['httpRequest', 'calEnsure', 'calFetch', 'calWrite', 'calEdit', 'calOpen', 'uiStatusBar', 'deviceId'], []);
+        ['httpRequest', 'calEnsure', 'calFetch', 'calWrite', 'calEdit', 'calOpen', 'uiStatusBar', 'deviceId',
+          'notify', 'widgetData'], []);
       this.proxyOk = true;
     } catch (e) {
       this.diag = '注入桥失败：' + e.message;
