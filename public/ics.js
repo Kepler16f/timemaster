@@ -57,7 +57,7 @@
     for (const line of lines) {
       if (/^BEGIN:VEVENT$/i.test(line)) {
         inEvent = true;
-        cur = { title: '未命名日程', desc: '', location: '', type: null, rrule: null, uid: null, start: null, end: null, rem: 0 };
+        cur = { title: '未命名日程', desc: '', location: '', type: null, rrule: null, uid: null, start: null, end: null, rem: null };
         continue;
       }
       if (/^END:VEVENT$/i.test(line)) {
@@ -69,7 +69,7 @@
             desc: cur.desc, location: cur.location, rrule: cur.rrule, sourceUid: cur.uid,
             type: cur.type === 'work' || cur.type === 'rest' ? cur.type : 'normal',
           };
-          if (cur.rem > 0) ev.rem = cur.rem;
+          if (cur.rem != null) ev.rem = cur.rem;
           // 全天跨多日：记录结束日（DTEND 排他），供渲染逐日出现
           if (cur.start.allDay && cur.end && cur.end.allDay) {
             const e = parseDate(cur.end.date); e.setDate(e.getDate() - 1);
@@ -86,9 +86,9 @@
       if (idx === -1) continue;
       const head = line.slice(0, idx), key = head.split(';')[0].toUpperCase(), val = line.slice(idx + 1);
       if (inAlarm) {
-        /* 只认「提前 n 分钟」的负时长提醒（-PT30M / -P1D 都收成分钟）；
-           开始之后的提醒没有意义，正时长一律忽略 */
-        if (key === 'TRIGGER') cur.rem = Math.max(0, triggerMinutes(val));
+        /* 只认「准时或提前」：-PT30M / -P1D 收成分钟，PT0M 是准时（0），
+           开始之后的正时长提醒没有意义、绝对时间触发认不了，都返回 null 表示「不写这个字段」 */
+        if (key === 'TRIGGER') { const t = triggerMinutes(val); if (t != null) cur.rem = t; }
         continue;
       }
       if (key === 'SUMMARY') cur.title = icalUnesc(val) || '未命名日程';
@@ -244,8 +244,9 @@
       if (ev.location) v.push('LOCATION:' + icalEsc(ev.location));
       if (ev.desc) v.push('DESCRIPTION:' + icalEsc(ev.desc));
       if (ev.rrule) v.push('RRULE:' + rruleOut(ev.rrule, tz));
-      if (ev.rem > 0) v.push('BEGIN:VALARM', 'ACTION:DISPLAY',
-        'TRIGGER:-PT' + Math.round(ev.rem) + 'M',
+      /* rem=0 是「准时提醒」，也是设了提醒，不能跟着 >0 一起被吞掉 */
+      if (ev.rem != null && ev.rem >= 0) v.push('BEGIN:VALARM', 'ACTION:DISPLAY',
+        'TRIGGER:' + (ev.rem > 0 ? '-PT' + Math.round(ev.rem) + 'M' : 'PT0M'),
         'DESCRIPTION:' + icalEsc(ev.title || '日程提醒'), 'END:VALARM');
       if (ev.type === 'work' || ev.type === 'rest') v.push('CATEGORIES:' + (ev.type === 'work' ? '班' : '休'), 'X-REUNION-TYPE:' + ev.type);
       v.push('END:VEVENT');
@@ -257,11 +258,13 @@
   function hms(t) { return String(t || '00:00').replace(/:/g, '') + '00'; }
   /* RFC 5545 时长：-P1DT1H30M / -PT90M → 分钟。认不得的形状返回 0（不提醒） */
   function triggerMinutes(val) {
-    const m = /^-?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/i.exec(String(val || '').trim());
-    if (!m) return 0;
-    const neg = String(val).trim().charAt(0) === '-';
-    const min = ((+m[1] || 0) * 10080) + ((+m[2] || 0) * 1440) + ((+m[3] || 0) * 60) + (+m[4] || 0);
-    return neg ? min : 0;
+    const s = String(val || '').trim();
+    /* 组 1 是负号：整条提醒的语义是「开始前多久」，所以负时长才是提前提醒 */
+    const m = /^(-?)P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?$/i.exec(s);
+    if (!m || !/\d/.test(s)) return null;   // 认不得的形状（含绝对时间触发）一律不写字段
+    const min = ((+m[2] || 0) * 10080) + ((+m[3] || 0) * 1440) + ((+m[4] || 0) * 60) + (+m[5] || 0);
+    if (m[1] === '-') return min;           // -PT30M / -P1D → 提前 30 分钟 / 1 天
+    return min === 0 ? 0 : null;             // PT0M=准时；正时长是「开始之后」，不认
   }
   function shiftDateStr(s, n) { const d = parseDate(s); d.setDate(d.getDate() + n); return dstr(d); }
   function utcCompact(d) {

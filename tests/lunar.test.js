@@ -99,17 +99,32 @@ eq('expand: 公历每年不受 lunar 影响', expand(solarYearly, '2026-01-01', 
     'DTSTART;VALUE=DATE:20261006', 'SUMMARY:提前一天的', 'BEGIN:VALARM', 'ACTION:DISPLAY',
     'TRIGGER:-P1D', 'END:VALARM', 'UID:r2@x', 'END:VEVENT',
     'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261007', 'SUMMARY:没提醒的', 'UID:r3@x', 'END:VEVENT',
+    /* 准时提醒：TRIGGER 是 PT0M（不是负时长），导入后 rem 必须是 0 而不是被吞掉 */
+    'BEGIN:VEVENT', 'DTSTART;VALUE=DATE:20261008', 'SUMMARY:准时的', 'BEGIN:VALARM', 'ACTION:DISPLAY',
+    'TRIGGER:PT0M', 'END:VALARM', 'UID:r4@x', 'END:VEVENT',
     'END:VCALENDAR',
   ].join('\r\n');
   const evs = IcsParser.parseICS(icsText);
   eq('valarm: -PT30M 收成 30 分钟', evs.find((e) => e.title === '带提醒的日程').rem, 30);
   eq('valarm: -P1D 收成 1440 分钟', evs.find((e) => e.title === '提前一天的').rem, 1440);
   eq('valarm: 没有提醒的没有 rem 键', 'rem' in (evs.find((e) => e.title === '没提醒的')), false);
+  eq('valarm: PT0M 收成准时 0', evs.find((e) => e.title === '准时的').rem, 0);
   /* 导出再导回：提醒不丢 */
-  const back = IcsParser.parseICS(IcsParser.buildICS(evs, { name: 'X' }));
+  const icsOut = IcsParser.buildICS(evs, { name: 'X' });
+  eq('valarm: 准时(rem=0)也写出 VALARM', /SUMMARY:准时的[\s\S]*?TRIGGER:PT0M/.test(icsOut.replace(/\r\n /g, '')), true);
+  const back = IcsParser.parseICS(icsOut);
   eq('valarm: 导出导回往返一致', back.find((e) => e.title === '带提醒的日程').rem, 30);
   eq('valarm: 导出导回 -P1D 一致', back.find((e) => e.title === '提前一天的').rem, 1440);
   eq('valarm: 无提醒的不多出 VALARM', back.find((e) => e.title === '没提醒的').rem, undefined);
+  eq('valarm: 准时导回仍是 0', back.find((e) => e.title === '准时的').rem, 0);
+}
+
+/* ---------- 6. 闰月：monthText 自带「闰」，调用方不许再补一个 ---------- */
+{
+  const l = Lunar.solar2lunar(2025, 7, 25); // 2025 年闰六月初一
+  eq('农历: 2025-07-25 是闰六月初一', [l.m, l.d, l.leap, l.monthText, l.dayText], [6, 1, true, '闰六月', '初一']);
+  eq('农历: 闰月的 monthText 只有一个闰字', (l.monthText.match(/闰/g) || []).length, 1);
+  eq('农历: 正常月的 monthText 不带闰', Lunar.solar2lunar(2025, 8, 23).monthText, '七月');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -1053,7 +1053,10 @@ async function enterSpace(code){
 }
 function startPolling(){
   stopPolling();
-  state.pollTimer=setInterval(()=>{ if(state.code && document.visibilityState==='visible') Store.syncCode(state.code).then(updateSyncChip); },60000);
+  /* 不在这里挡 visibilityState：后台通知（见 Store.onDiff 里的 document.hidden 分支）
+     靠的就是这条轮询把 diff 带回来，挡掉等于永远弹不出来。页面隐藏时浏览器自己会把
+     setInterval 限流到分钟级以上，回到前台还有下面那条 visibilitychange 立刻补一次。 */
+  state.pollTimer=setInterval(()=>{ if(state.code) Store.syncCode(state.code).then(updateSyncChip); },60000);
 }
 function stopPolling(){ if(state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer=null; } }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden && state.code) Store.syncCode(state.code).then(updateSyncChip); });
@@ -1590,13 +1593,14 @@ function openDetail(ev, data, ds){
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
   if(ev.allDay || !ev.start) lines.push('全天');
   if(ev.rrule) lines.push(`重复：${repeatText(ev.rrule)}`);
-  if(ev.rem!=null && ev.rem>0) lines.push(`提醒：${remText(ev.rem)}`);
+  if(ev.rem!=null) lines.push(`提醒：${remText(ev.rem)}`);
   if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
   if(ev.location) lines.push(`地点：${ev.location}`);
   if(ev.calDisp||ev.calAcct) lines.push(`来自日历：${ev.calDisp}${ev.calAcct?'（'+ev.calAcct+'）':''}`);
   const d=IcsParser.parseDate(detailDate);
   const lun=Lunar.solar2lunar(d.getFullYear(),d.getMonth()+1,d.getDate());
-  if(lun) lines.push(`农历：${lun.leap?'闰':''}${lun.monthText}${lun.dayText}（${lun.yearText}${lun.animal}年）`);
+  /* monthText 自己就带「闰」前缀（Lunar.monthName 里加的），这里再补一次会变成「闰闰二月」 */
+  if(lun) lines.push(`农历：${lun.monthText}${lun.dayText}（${lun.yearText}${lun.animal}年）`);
   const hol=Holidays.get(detailDate);
   if(hol) lines.push(`节假日：${hol.name}（${hol.off?'休':'调休上班'}）`);
   if(ev.desc) lines.push(`备注：${ev.desc}`);
