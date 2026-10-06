@@ -1331,6 +1331,10 @@ function renderSpanBars(data, evs){
   return tl;
 }
 
+/* 成员名前挂空间名：一个人往往同时在「家」「球队」好几个空间里，
+   窄列上光看「小明」分不清这条是谁家的小明，【空间】古月 一眼对上 */
+function spaceTag(data){ const n=(data&&String(data.name||'').trim())||'空间'; return '【'+n+'】'; }
+
 function evCard(data, e, ds){
   const owner=memberOf(data,e.ownerId);
   const card=el('div','ev-card');
@@ -1340,7 +1344,7 @@ function evCard(data, e, ds){
   const main=el('div','ec-main');
   main.appendChild(el('div','ec-title', e.type==='normal'?e.title:(e.title+'（'+(e.type==='work'?'班':'休')+'）')));
   const meta=[];
-  meta.push(owner.name+(Store.owns(e.ownerId,data)?'（我）':''));
+  meta.push(spaceTag(data)+owner.name+(Store.owns(e.ownerId,data)?'（我）':''));
   if(e.rrule) meta.push(repeatText(e.rrule, true));
   if(e.location) meta.push(e.location);
   if(e.desc) meta.push(e.desc);
@@ -1502,7 +1506,7 @@ function timedEvBlock(data, it, ds){
   if(tight) b.classList.add('tight');
   b.style.cssText=`top:${it.s/1440*100}%;height:${Math.min(span/1440*100,100-it.s/1440*100)}%;left:${it.lane/it.lanes*100}%;width:${100/it.lanes-1.2}%;background:${m.color};border-left-color:${shade(m.color,-25)}`;
   b.appendChild(el('b',null,e.title));
-  b.appendChild(el('span','tm',`${e.start||''}${e.end?'–'+e.end:''}${tight?'':' '+m.name}`));
+  b.appendChild(el('span','tm',`${e.start||''}${e.end?'–'+e.end:''}${tight?'':' '+spaceTag(data)+m.name}`));
   if(e.location) b.appendChild(el('span','loc','📍 '+e.location));
   b.onclick=(ev)=>{ ev.stopPropagation(); openDetail(e,data,ds); };
   return b;
@@ -1557,7 +1561,9 @@ let mSwipe=null;
 $('#calMain').addEventListener('touchstart',(e)=>{
   if(e.touches.length!==1){ mSwipe=null; return; }
   const t=e.touches[0];
-  mSwipe={ y:t.clientY, x:t.clientX, sl:$('#calendar').scrollLeft };
+  mSwipe={ y:t.clientY, x:t.clientX, sl:$('#calendar').scrollLeft,
+    sc:$('#calMain').scrollTop,
+    onCal: !!(e.target.closest && e.target.closest('#calendar')) };
 },{passive:true});
 $('#calMain').addEventListener('touchend',(e)=>{
   if(!mSwipe) return;
@@ -1566,8 +1572,15 @@ $('#calMain').addEventListener('touchend',(e)=>{
   const cal=$('#calendar');
   if(ax>70 && ax>ay*1.6){
     if(!cal || cal.scrollLeft===mSwipe.sl) shiftView(dx<0?1:-1);
-  } else if(state.view==='month' && window.innerWidth<600 && ay>48 && ay>ax*1.5){
-    setMonthCollapsed(dy<0);
+  } else if(state.view==='month' && ay>48 && ay>ax*1.5){
+    /* 手指落在日历格子上：上下滑翻月（上滑=下一个月，和翻书一致）；
+       落在下方日程列表里：保持原来的收起/展开整月手势 */
+    if(mSwipe.onCal){
+      navStep(dy<0?1:-1);
+      $('#calMain').scrollTop=mSwipe.sc; // 滑动过程中列表被顺手滚走了，翻月后归位
+    } else if(window.innerWidth<600){
+      setMonthCollapsed(dy<0);
+    }
   }
   mSwipe=null;
 },{passive:true});
@@ -1588,7 +1601,7 @@ function openDetail(ev, data, ds){
   $('#detailTitle').textContent=ev.title;
   const lines=[];
   const mine=Store.owns(ev.ownerId,data);
-  lines.push(`成员：${owner.name}${mine?'（我）':''}`);
+  lines.push(`成员：${spaceTag(data)}${owner.name}${mine?'（我）':''}`);
   lines.push(`日期：${detailDate}${detailDate!==ev.date?'（原起于 '+ev.date+'）':''}${ev.endDate?' → '+ev.endDate:''}`);
   if(!ev.allDay && ev.start) lines.push(`时间：${ev.start}${ev.end?' – '+ev.end:''}`);
   if(ev.allDay || !ev.start) lines.push('全天');
@@ -2091,10 +2104,7 @@ function renderAllAgenda(box){
   if(!list.length) box.appendChild(el('p','ag-empty','这一天所有空间都没有日程。'));
   const cardOf=(e)=>{
     const it=list.find((x)=>x.ev===e); if(!it) return null;
-    const card=evCard(it.sp.data, e, ds);
-    const chip=el('span','badge ev-space',it.sp.name);
-    card.querySelector('.ec-main').appendChild(chip);
-    return card;
+    return evCard(it.sp.data, e, ds); /* 卡片的成员行自带【空间名】前缀，不再另挂徽章 */
   };
   marks.forEach((e)=>{ const c=cardOf(e); if(c) box.appendChild(c); });
   evs.forEach((e)=>{ const c=cardOf(e); if(c) box.appendChild(c); });
