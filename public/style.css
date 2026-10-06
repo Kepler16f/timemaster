@@ -662,11 +662,17 @@ html.tm-desktop .cell-lunar { font-size: 11px; }
 @media (max-width: 599px) { .tg-hcell:not(.wide) .tg-lunar { display: none; } }
 @media (orientation: landscape) and (max-height: 620px) { .tg-lunar { display: none; } .cell-lunar { display: none; } }
 
-/* 成员条右侧的工具按钮（找空闲 / 动态） */
+/* 成员条右侧的工具按钮：手机上收成 34px 圆图标（和「收起/展开」同规格），
+   别抢成员标签的宽度——标签一行本来就不宽；≥600px 的宽屏/桌面再恢复文字胶囊 */
 .pb-actions { display: flex; gap: 6px; flex: 0 0 auto; margin-left: auto; }
-.pb-btn { flex: 0 0 auto; border: 1px solid var(--line); background: var(--panel); color: var(--sub); font-size: 12px; padding: 4px 10px; border-radius: 14px; cursor: pointer; white-space: nowrap; }
-.pb-btn:active { transform: scale(.96); }
+.pb-btn { flex: 0 0 auto; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); background: var(--panel); color: var(--icon); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; font-size: 15px; line-height: 1; }
+.pb-txt { display: none; }
+.pb-btn:active { transform: scale(.92); }
 @media (hover: hover) and (pointer: fine) { .pb-btn:hover { border-color: var(--accent); color: var(--accent); } }
+@media (min-width: 600px) {
+  .pb-btn { width: auto; height: 30px; padding: 0 11px; border-radius: 15px; gap: 4px; font-size: 12px; }
+  .pb-txt { display: inline; }
+}
 
 /* 详情弹层的出勤区 */
 .detail-rsvp { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1.5px solid var(--tint-line); border-radius: 14px; background: var(--tint); }
