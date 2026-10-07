@@ -1560,26 +1560,33 @@ function shiftView(dir){
 let mSwipe=null;
 $('#calMain').addEventListener('touchstart',(e)=>{
   if(e.touches.length!==1){ mSwipe=null; return; }
-  const t=e.touches[0];
+  const t=e.touches[0], cm=$('#calMain');
   mSwipe={ y:t.clientY, x:t.clientX, sl:$('#calendar').scrollLeft,
-    sc:$('#calMain').scrollTop,
+    sc:cm.scrollTop,
+    atTop: cm.scrollTop<=4,
+    /* 起手势时已到最底、页面再也滚不动了——这是判断「上滑是不是想翻下个月」的关键：
+       只要还能往下滚，那上滑就是在看下面的日程，绝不能翻月 */
+    atBottom: cm.scrollTop + cm.clientHeight >= cm.scrollHeight - 4,
     onCal: !!(e.target.closest && e.target.closest('#calendar')) };
 },{passive:true});
 $('#calMain').addEventListener('touchend',(e)=>{
   if(!mSwipe) return;
+  const cm=$('#calMain');
   const t=e.changedTouches[0], dy=t.clientY-mSwipe.y, dx=t.clientX-mSwipe.x;
   const ax=Math.abs(dx), ay=Math.abs(dy);
   const cal=$('#calendar');
   if(ax>70 && ax>ay*1.6){
     if(!cal || cal.scrollLeft===mSwipe.sl) shiftView(dx<0?1:-1);
   } else if(state.view==='month' && ay>48 && ay>ax*1.5){
-    /* 手指落在日历格子上：上下滑翻月（上滑=下一个月，和翻书一致）；
-       落在下方日程列表里：保持原来的收起/展开整月手势 */
-    if(mSwipe.onCal){
+    /* 竖向手势：滚动永远压过翻月——这段手势只要真把页面滚动了（往下看日程 / 往上看前面的），
+       就纯当滚动，绝不翻月。只有滚到顶或滚到底、页面已经滚不动了还往同方向推
+       （撞墙继续推＝想换页），才翻月：顶边往下拽→上一个月，底边往上推→下一个月。
+       需要「overscroll」才触发，普通「上滑看日程」必然先滚动，就不会误翻了 */
+    const scrolled = cm.scrollTop !== mSwipe.sc;
+    if(!scrolled && ((dy>0 && mSwipe.atTop) || (dy<0 && mSwipe.atBottom))){
       navStep(dy<0?1:-1);
-      $('#calMain').scrollTop=mSwipe.sc; // 滑动过程中列表被顺手滚走了，翻月后归位
-    } else if(window.innerWidth<600){
-      setMonthCollapsed(dy<0);
+    } else if(!mSwipe.onCal && window.innerWidth<600){
+      setMonthCollapsed(dy<0);   // 手机上落在日程列表里的竖滑仍是收起/展开整月
     }
   }
   mSwipe=null;
