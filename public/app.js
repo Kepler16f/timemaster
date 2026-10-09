@@ -108,6 +108,25 @@ $('#themeSeg').onclick = (e) => {
 };
 if (darkMQ.addEventListener) darkMQ.addEventListener('change', () => { if ((localStorage.getItem(THEME_KEY) || 'auto') === 'auto') applyTheme(); });
 
+/* ---------- 字号档位（标准/大/特大） ----------
+   整页缩放走 documentElement 的 zoom 而不是改根字号：样式表里的字号全是写死的 px，
+   动根字号对它们无效。zoom 是三端内核（Chromium/ArkWeb/WebView2）都认的整页等比缩放，
+   布局宽度也跟着折算，格子、时间轴不会散架。1 时清掉内联值，回落默认渲染。
+   首帧防闪大在 index.html 头部的防闪白脚本里同源处理。 */
+const FONTSIZE_KEY = 'tm:fontSize';
+function applyFontSize(){
+  let z = parseFloat(localStorage.getItem(FONTSIZE_KEY) || '1');
+  if (!(z >= 1 && z <= 1.5)) z = 1;
+  document.documentElement.style.zoom = z === 1 ? '' : String(z);
+  document.querySelectorAll('#fontSizeSeg .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.val === String(z)));
+}
+$('#fontSizeSeg').onclick = (e) => {
+  const b = e.target.closest('.seg-btn');
+  if (!b) return;
+  localStorage.setItem(FONTSIZE_KEY, b.dataset.val);
+  applyFontSize();
+};
+
 /* 日视图默认收起：不常用的人不必在视图条上看见那一格 */
 function syncDayView(){
   const on = state.dayView;
@@ -1774,7 +1793,40 @@ function fillRepeatForm(r){
   setWeekdays(r?r.byDay:null);
   syncRepeatRows();
 }
-$('#eventSave').onclick=async()=>{
+/* 同一位成员在这一天是不是已经有安排了：定时日程按时间重叠算，全天日程占满一整天。
+   只看新写的这几条实例第一次出现的那天（循环日程改时间，以开始日为准），别翻一年扫全部
+   实例——「每天」的日程会和未来的自己逐日相撞，天天弹就没意义了 */
+function findConflict(code, ev, ignoreId){
+  if(ev.type==='work' || ev.type==='rest') return null;
+  const data=Store.get(code); if(!data) return null;
+  const who=ignoreId ? (data.events[ignoreId]||{}).ownerId : myId();
+  if(!who) return null;
+  const s0=ev.allDay?0:toMin(ev.start), e0=ev.allDay?1440:(ev.end?toMin(ev.end):s0+60);
+  const days=[]; // 检查日：开始日 + 首次出现的循环实例（限当月）
+  days.push(ev.date);
+  if(ev.rrule){
+    const first=IcsParser.expandOccurrences(ev, shiftDay(ev.date,1), shiftDay(ev.date,30))[0];
+    if(first && days.indexOf(first)<0) days.push(first);
+  }
+  const ids=Object.keys(data.events||{});
+  for(let i=0;i<ids.length;i++){
+    const id=ids[i];
+    if(ignoreId && id===ignoreId) continue;
+    const o=data.events[id];
+    if(o.type==='work' || o.type==='rest') continue;
+    if(String(Store.resolve(data,o.ownerId))!==String(who)) continue;
+    const occ=IcsParser.expandOccurrences(o, ev.date, shiftDay(ev.date, 30));
+    for(let j=0;j<occ.length;j++){
+      if(days.indexOf(occ[j])<0) continue;
+      const s1=isAllDay(o)?0:toMin(o.start);
+      const e1=isAllDay(o)?1440:(o.end?toMin(o.end):s1+60);
+      if(ev.allDay || isAllDay(o)){ if(s0<e1 && s1<e0) return { ev:o, date:occ[j] }; }
+      else if(s0<e1 && s1<e0) return { ev:o, date:occ[j] };
+    }
+  }
+  return null;
+}
+async function doEventSave(){
   const date=$('#evDate').value; if(!date) return toast('请选择日期');
   const allDay=$('#evAllDay').checked;
   const rrule=repeatFromForm();
@@ -1789,11 +1841,22 @@ $('#eventSave').onclick=async()=>{
     rem: remVal==='none' ? null : Number(remVal),
   };
   if(allDay) ev.endDate=null;
+  const code=editingCode||state.code;
+  if(code){
+    const c=findConflict(code, ev, editingEvent?editingEvent.id:null);
+    if(c){
+      const when=allDay ? '是全天' : (c.ev.start ? c.ev.start+'–'+(c.ev.end||'') : '时间重叠');
+      const sure=await uiConfirm('可能撞车了',
+        `这位成员 ${c.date} 已有「${c.ev.title||'未命名日程'}」（${when}）。这条「${ev.title}」时间上叠着——还是要保存吗？`,
+        '仍要保存');
+      if(!sure) return; // 留在弹层里让人改
+    }
+  }
   let ok=true;
   let sysBack=null;
   if(editingEvent){
     if(date!==editingEvent.date) ev.endDate=null; // 改了日期，原来的多天区间不再成立
-    ok=Store.updateEvent(editingCode||state.code, editingEvent.id, ev);
+    ok=Store.updateEvent(code, editingEvent.id, ev);
     /* 从系统日历导入的日程：改动要回到它原来所在的那个日历，改前先逐条确认，且永不删除 */
     if(ok && CalBridge.sysHandle(editingEvent.sourceUid)){
       sysBack={ before:editingEvent, after:Object.assign({}, editingEvent, ev) };
@@ -1801,14 +1864,15 @@ $('#eventSave').onclick=async()=>{
   } else {
     const ev2=Object.assign({}, ev); delete ev2.rem; // 新建时没选提醒就不落 rem 键，云端少一个字段
     if(ev.rem!=null) ev2.rem=ev.rem;
-    Store.addEvent(editingCode||state.code, ev2);
+    Store.addEvent(code, ev2);
   }
   state.day=date; syncYm();
   editingEvent=null; editingCode=null;
   $('#eventModal').hidden=true; toast(ok?'已保存，稍后自动同步':'只有创建者可以编辑这条日程');
   pushWidgetSoon();
   if(sysBack) await syncBackToSystemCalendar(sysBack.before, sysBack.after);
-};
+}
+$('#eventSave').onclick=doEventSave;
 
 /* 事件开始时间的毫秒值：写回原日历时靠它框定原生侧的回查范围 */
 function evStartMs(ev){
@@ -1988,6 +2052,60 @@ $('#exportCopy').onclick=async()=>{
   try{ await navigator.clipboard.writeText($('#exportText').value); }
   catch(e){ $('#exportText').select(); document.execCommand('copy'); } // WebView 里 clipboard API 常不给（非安全上下文）
   toast('已复制，去备忘录粘贴保存');
+};
+
+/* ---------- 完整备份：一个空间的原始文档（含成员、出勤、颜色）导出成 .json / 找回 ----------
+   .ics 只装日历内容，回不了成员和 RSVP；网盘又是单点——这份 .json 就是把网盘上那一个文件原样抄回家。 */
+function backupFileName(name){
+  const t=new Date();
+  const safe=String(name||'space').replace(/[\\/:*?"<>|\s]+/g,'_').slice(0,28);
+  return 'reunion-'+safe+'-'+t.getFullYear()+pad(t.getMonth()+1)+pad(t.getDate())+'.json';
+}
+$('#exportJsonBtn').onclick=()=>{
+  if(!state.code) return toast('请先进入一个空间');
+  const d=Store.get(state.code);
+  if(!d) return toast('这个空间还没有数据');
+  const text=JSON.stringify(d, null, 2);
+  const fn=backupFileName(d.name||state.code);
+  if(canSaveFile()){ saveTextAsFile(text,fn); return toast('已导出 '+fn+'（'+Object.keys(d.events||{}).length+' 条日程）'); }
+  $('#exportTitle').textContent='导出完整备份（'+Object.keys(d.events||{}).length+' 条日程）';
+  $('#exportTip').textContent='这台设备的网页内核不让应用直接存文件：全选下面内容，粘贴进备忘录存成 '+fn+'（.json 文件）。它就是这个空间在网盘上那份数据的原样拷贝。';
+  $('#exportText').value=text;
+  $('#exportModal').hidden=false;
+};
+$('#importJsonBtn').onclick=()=>{ $('#backupFile').click(); };
+$('#backupFile').onchange=async(e)=>{
+  const f=e.target.files&&e.target.files[0]; e.target.value='';
+  if(!f) return;
+  let doc=null;
+  try{ doc=JSON.parse(await f.text()); }catch(err){ return toast('这个文件不是有效的 JSON 备份'); }
+  const n=doc&&doc.events?Object.keys(doc.events).length:0;
+  if(!doc||doc.v!==2||!n) return toast('备份文件不对：要的是本 App 导出的 .json（不是 .ics）');
+  const nm=doc.name||'空间 '+String(doc.code||'');
+  const choice=await ask({ title:'找回「'+nm+'」',
+    text:'备份里有 '+n+' 条日程、'+Object.keys(doc.members||{}).length+' 位成员。怎么找回？',
+    options:[
+      { v:'merge', t: state.code ? '补进当前空间「'+((Store.get(state.code)||{}).name||state.code)+'」（只补现在没有的）' : '作为新空间找回（换一个邀请码）' },
+      { v:'new', t:'作为新空间找回（网盘上新建一份，绝不动现有数据）' },
+    ]});
+  if(choice==='cancel'||!choice) return;
+  try{
+    if(choice==='merge'){
+      if(!state.code) throw new Error('先随便进入一个空间，或在别处选「作为新空间」');
+      const r=Store.importBackup(state.code, doc);
+      toast('找回 '+r.events+' 条日程'+(r.members?'、'+r.members+' 位成员':'')+'，稍后自动同步上网盘');
+    } else {
+      const code=genCode();
+      const doc2=Object.assign({}, doc, { code, name:(doc.name||'找回的空间'), deletions:doc.deletions||{}, retired:doc.retired||{} });
+      Dav.bindSpace(code, Dav.cfg());
+      const p=await Dav.put(code, JSON.stringify(doc2), null); // 仅新建：撞码就是别人的空间，绝不覆盖
+      if(p.status===412) return toast('邀请码刚好撞车了，请再试一次');
+      await Store.attach(code, doc2, p.etag||null);
+      Store.upsertSpaceMeta(code, doc2.name);
+      await enterSpace(code);
+      toast('已作为新空间找回：'+Object.keys(doc2.events).length+' 条日程，邀请码 '+code);
+    }
+  }catch(err){ toast(err.message||'找回失败'); }
 };
 
 function syncSnapUI(){
@@ -2223,6 +2341,63 @@ $('#activityClear').onclick=async()=>{
   saveFeed([]); renderActivity(); toast('已清空');
 };
 
+/* ---------- 搜索日程 ----------
+   在本机已有的数据里找（无服务器不联网查），匹配标题 / 备注 / 地点。
+   循环日程把「今天往后一年」内的每次出现都列出来，点一条跳到那天并弹详情。 */
+function openSearch(){
+  if(!state.code && state.view!=='all') return toast('请先进入一个空间');
+  $('#searchInput').value=''; $('#searchResults').innerHTML='';
+  $('#searchHint').textContent = state.view==='all'
+    ? '在「全部日程」里搜所有空间（只搜本机已同步到的）——点结果直接跳过去看。'
+    : '在本空间的日程里找（标题 / 备注 / 地点），循环日程也认——点结果直接跳到那天。';
+  $('#searchModal').hidden=false;
+  setTimeout(()=>{ const i=$('#searchInput'); if(i) i.focus(); }, 50);
+}
+function runSearch(){
+  const q=$('#searchInput').value.trim().toLowerCase();
+  const box=$('#searchResults'); box.innerHTML='';
+  if(!q){ box.appendChild(el('p','import-tip','输入两个字先。')); return; }
+  const scope = state.view==='all' ? allSpacesData()
+    : (state.code ? [{ code:state.code, name:(Store.get(state.code)||{}).name||'空间', data:Store.get(state.code) }] : []);
+  const from=todayStr(); const to=shiftDay(from, 365);
+  let hits=0;
+  scope.forEach((sp)=>{
+    if(!sp.data) return;
+    Object.keys(sp.data.events||{}).forEach((id)=>{
+      const e=sp.data.events[id];
+      const hay=[e.title, e.desc, e.location].filter(Boolean).join(' ').toLowerCase();
+      if(hay.indexOf(q)<0) return;
+      const owner=memberOf(sp.data, e.ownerId);
+      const dates = e.rrule ? IcsParser.expandOccurrences(e, from, to) : [e.date];
+      dates.slice(0, 14).forEach((ds)=>{
+        hits++;
+        const row=el('button','batch-row sr-row'); row.type='button';
+        const dot=el('span','dot'); dot.style.background=owner.color;
+        row.appendChild(dot);
+        const col=el('span','sr-body');
+        col.appendChild(el('span','sr-title', e.title||'未命名日程'));
+        const d=IcsParser.parseDate(ds);
+        let sub=`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`;
+        if(e.start && !e.allDay) sub+=` ${e.start}${e.end?'–'+e.end:''}`;
+        sub+=' · '+spaceTag(sp.data)+owner.name;
+        if(sp.data!==undefined && state.view==='all') sub+=' · '+sp.name;
+        if(e.location) sub+=' · 📍'+e.location;
+        col.appendChild(el('span','sr-sub',sub));
+        row.appendChild(col);
+        row.onclick=()=>{ $('#searchModal').hidden=true; state.day=ds; syncYm(); renderCalendar(true); openDetail(e, sp.data, ds); };
+        box.appendChild(row);
+      });
+      if(hits>80) return;
+    });
+  });
+  if(!hits) box.appendChild(el('p','import-tip','没找到含「'+$('#searchInput').value.trim()+'」的日程。'));
+  else if(hits>=80) box.appendChild(el('p','import-tip','结果太多，只列了前面这些——再补两个字缩小范围。'));
+}
+$('#searchBtn').onclick=openSearch;
+$('#searchClose').onclick=()=>{ $('#searchModal').hidden=true; };
+$('#searchInput').oninput=runSearch;
+$('#searchInput').onkeydown=(e)=>{ if(e.key==='Enter') runSearch(); };
+
 /* ---------- 节假日与农历（设置页） ---------- */
 function syncHolidayUI(){
   const ys=Holidays.years();
@@ -2416,7 +2591,7 @@ $('#todayBtn').onclick=()=>{ state.day=todayStr(); syncYm(); renderCalendar(true
 
 /* ---------- 启动：除首次安装外，直接回到最近一次进入的空间 ---------- */
 async function boot(){
-  applyTheme(); showDeviceId(); renderUpdate(); syncAutoUpd(); syncDayView(); syncAllSegBtn(); syncNotifySw();
+  applyTheme(); applyFontSize(); showDeviceId(); renderUpdate(); syncAutoUpd(); syncDayView(); syncAllSegBtn(); syncNotifySw();
   /* 桌面端系统日历对接暂缓：整组隐藏，别留一个点了只会报错的按钮 */
   if (isDesktopShell()) $('#calGroup').hidden = true;
   const last=localStorage.getItem('tm:lastSpace'), cfg=Dav.cfg();
@@ -2426,5 +2601,6 @@ async function boot(){
   adoptNativeDeviceId(8); // 鸿蒙桥可能晚于首屏才注入，重试等一会儿
   if(window.Auth && Auth.session()) Auth.refresh(); // 静默续期，失败保持现有会话
   autoCheckUpdate(); // 有新版弹一次，装好前的提醒就靠它
+  Holidays.autoCheck().catch(()=>{}); // 11 月中旬起顺手查来年节假日，失败安静
 }
 boot();

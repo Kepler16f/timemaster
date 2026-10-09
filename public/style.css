@@ -699,3 +699,13 @@ button.batch-row.ft-slot { width: 100%; cursor: pointer; border: 1.5px solid var
 
 /* 空间动态：时间列固定宽，正文让开 */
 .act-time { flex: 0 0 96px; font-size: 12px; color: var(--text-weak); font-variant-numeric: tabular-nums; }
+
+/* 搜索：输入框 + 结果行（点一条跳过去） */
+.search-input { width: 100%; border: 1.5px solid var(--tint-line); background: var(--field-bg); color: var(--text); font-size: 15px; padding: 10px 12px; border-radius: 12px; outline: none; }
+.search-input:focus { border-color: var(--accent); }
+button.batch-row.sr-row { width: 100%; cursor: pointer; border: 1.5px solid var(--tint-line); background: var(--card); text-align: left; }
+.sr-row .dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; }
+.sr-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sr-title { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-sub { font-size: 11.5px; color: var(--text-weak); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) and (pointer: fine) { .sr-row:hover { border-color: var(--accent); } }
