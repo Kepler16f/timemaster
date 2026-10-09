@@ -138,8 +138,12 @@
     const count = r.count ? parseInt(r.count, 10) : 0;
     const startWeekday = start.getDay();
     const monday = new Date(start); monday.setDate(monday.getDate() - ((startWeekday + 6) % 7));
-    // 从 max(start, from - 400天) 向后扫描，日频以上限 400 次实例
-    const scanFrom = new Date(Math.max(start, from.getTime() - 400 * 86400000));
+    // 无 COUNT：从 max(start, from - 400天) 向后扫；
+    // 有 COUNT：必须从 start 起扫——窗口外的历史出现也要占名额，
+    // 否则每个新窗口从 0 重数，「共 10 次」翻到后面的月份又满血复活
+    let scanMs = Math.max(start.getTime(), from.getTime() - 400 * 86400000);
+    if (count && start.getTime() < scanMs) scanMs = start.getTime();
+    const scanFrom = new Date(scanMs);
     let n = 0, seen = 0;
     for (let d = new Date(scanFrom); d <= effTo && n < 400; d.setDate(d.getDate() + 1)) {
       let hit = false;
