@@ -95,6 +95,19 @@
     return out;
   }
 
+  var CHECK_KEY = 'tm:holidayLastCheck';
+  /* 启动时的静默检查：来年的安排每年 11 月中旬公布——11/12 月顺手查一次下一年，
+     跨年还没手动更新过的（1–6 月、本机数据缺今年）也补查。7 天节流，失败不吭声。 */
+  async function autoCheck() {
+    const now = new Date(), y = now.getFullYear(), m = now.getMonth() + 1;
+    const latest = years().reduce((a, b) => Math.max(a, b), 0);
+    const wantNext = (m === 11 && now.getDate() >= 15) || m === 12 || (m >= 1 && m <= 6 && latest < y);
+    if (!wantNext) return null;
+    try { if (Date.now() - (+(localStorage.getItem(CHECK_KEY) || 0)) < 7 * 86400000) return null; } catch (e) { /* 读不了就算了 */ }
+    try { localStorage.setItem(CHECK_KEY, String(Date.now())); } catch (e) { /* 存不了下次照样节流重试 */ }
+    return refresh();
+  }
+
   /* 拉指定年份（缺省 = 已收录年份里最新的下一年 + 当前年）；成功存 localStorage 并清缓存。
      返回 {saved:[年], failed:[年]}；离线/超时不算错误路径，调用方据此提示即可 */
   async function refresh(onlyYear) {
@@ -117,5 +130,5 @@
     return out;
   }
 
-  window.Holidays = { get, years, refresh, sourceLabel, normalize };
+  window.Holidays = { get, years, refresh, autoCheck, sourceLabel, normalize };
 })();
