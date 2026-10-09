@@ -750,6 +750,33 @@
       });
       return dup.length;
     },
+    /* 从「完整备份」找回：只补本机现在没有的条目，绝不覆盖已有内容
+       （和快照恢复同一个哲学：别人的新改动不能被旧备份顶掉）。
+       被墓碑杀掉的那条能补回来——写入时间戳压过墓碑，同步一轮不会被再杀一次。 */
+    importBackup(code, doc) {
+      if (!doc || doc.v !== 2 || typeof doc.events !== 'object' || !doc.events) {
+        throw new Error('备份文件不对：要的是本 App 导出的空间备份（v:2 带 events 的那份），不是 .ics');
+      }
+      if (!loadLocal(code).data) throw new Error('本机还没有这个空间的副本');
+      if (doc.dissolved) throw new Error('这份备份所属的空间已被创建者解散，找回没有意义');
+      const now = Date.now();
+      const res = { events: 0, members: 0 };
+      mutate(code, (d) => {
+        Object.keys(doc.members || {}).forEach((k) => {
+          if (!d.members[k]) { d.members[k] = Object.assign({}, doc.members[k]); res.members++; }
+        });
+        const tomb = d.deletions || {};
+        Object.keys(doc.events).forEach((id) => {
+          const src = doc.events[id];
+          if (!src || d.events[id]) return;
+          const ev = Object.assign({}, src, { id });
+          ev.updatedAt = Math.max(now, (src.updatedAt || 0), (tomb[id] || 0) + 1);
+          d.events[id] = ev;
+          res.events++;
+        });
+      });
+      return res;
+    },
     /* patch 里值为 null 的键会被删除（例如把「重复」改回不重复） */
     /* 应答出勤（来 / 不去 / 待定，null=清除）：每人只写自己的键，正文编辑权不受影响。
        没进成员表也能答（答完 ensureMember 会把自己补回去） */

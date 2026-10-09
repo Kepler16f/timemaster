@@ -35,6 +35,9 @@ function eq(name, got, want) {
   const g = JSON.stringify(got), w = JSON.stringify(want);
   if (g === w) pass++; else { fail++; console.log(`FAIL ${name}\n  got  ${g}\n  want ${w}`); }
 }
+function ok(name, cond) {
+  if (cond) pass++; else { fail++; console.log(`FAIL ${name}`); }
+}
 
 function mkDoc(code, events, extra) {
   return Object.assign({
@@ -212,6 +215,30 @@ function mkEvent(id, ownerId, updatedAt, rsvp) {
     const wed = r.find((x) => x.date === '2026-10-07');
     eq('free: 循环日程展开后当天剩两段', wed.slots.map((s) => [s.s, s.e]), [['08:00', '09:00'], ['10:00', '22:00']]);
     eq('free: 其余天不受影响', r.find((x) => x.date === '2026-10-08').slots, [{ sMin: 480, eMin: 1320, s: '08:00', e: '22:00' }]);
+  }
+
+  /* ---------- 5. 完整备份找回：只补缺的、压过墓碑、绝不动已有的 ---------- */
+  {
+    const backup = mkDoc('BK1', {
+      e1: mkEvent('e1', 'a', 100),
+      e2: mkEvent('e2', 'b', 90),
+      e3: mkEvent('e3', 'b', 50, { a: { s: 'yes', t: 100 } }),
+    });
+    const local = mkDoc('BK1', { e1: mkEvent('e1', 'a', 100), e2: mkEvent('e2', 'b', 5e12) }, { deletions: { e3: 9e12 } });
+    await store.attach('BK1', local);
+    const r = store.importBackup('BK1', backup);
+    eq('backup: 只补回丢了的那条', r.events, 1);
+    eq('backup: 别人改过的不动（updatedAt 还是新的）', store.get('BK1').events.e2.updatedAt, 5e12);
+    eq('backup: 找回条目时间戳压过墓碑', store.get('BK1').events.e3.updatedAt > 9e12, true);
+    eq('backup: rsvp 随找回条目原样回来', store.get('BK1').events.e3.rsvp.a.s, 'yes');
+    let err = '';
+    try { store.importBackup('BK1', { v: 1, events: {} }); } catch (e) { err = e.message; }
+    ok('backup: 非 v:2 文档报格式错', err.indexOf('备份') >= 0);
+    try { store.importBackup('BK9', { v: 2, events: { a: {} } }); err = 'no-throw'; } catch (e) { err = e.message; }
+    ok('backup: 本机没这个空间时报错而不是默默建', err.indexOf('本机') >= 0);
+    const dis = mkDoc('BK1', { e9: mkEvent('e9', 'b', 10) }, { dissolved: { at: 1, by: 'a' } });
+    try { store.importBackup('BK1', dis); err = 'no-throw'; } catch (e) { err = e.message; }
+    ok('backup: 已解散空间的备份拒绝找回', err.indexOf('解散') >= 0);
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
