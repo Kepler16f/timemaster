@@ -32,7 +32,7 @@
     const code = body && (body.code || body.error_code);
     if (status === 429) return '验证码请求太频繁，请稍后再试，并先检查收件箱和垃圾邮件';
     if (status === 502 || status === 503 || status === 504 || status === 404) {
-      return '邮箱登录服务暂时不可用，请稍后重试；本机日程仍可使用。维护者请检查 Supabase 项目是否休眠';
+      return '邮箱登录服务暂时不可用，请稍后重试或联系维护者；本机日程仍可使用';
     }
     if (code === 'otp_expired') return '验证码无效或已过期，请使用最新邮件中的验证码';
     if (status >= 500) return '邮箱服务暂时无法处理请求，请稍后重试；如果持续收不到邮件，请让维护者检查邮件发送配置';
