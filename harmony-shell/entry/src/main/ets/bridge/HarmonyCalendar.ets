@@ -81,6 +81,7 @@ interface WireEv {
 
 interface WirePayload {
   events?: WireEv[];
+  scope?: string;
 }
 
 /* 编辑「别人日历里的日程」的入参：origMs 是它改动前的开始时间，用来框定回查范围 */
@@ -363,6 +364,7 @@ export class HarmonyCalendar {
     }
     const payload = JSON.parse(payloadJson) as WirePayload;
     const list: WireEv[] = payload.events || [];
+    const scopePrefix: string = payload.scope ? payload.scope + ':' : '';
     const cal = await getCal(ctx);
     const now = Date.now();
     const existing = await labeled('读取本应用已有日程',
@@ -378,28 +380,15 @@ export class HarmonyCalendar {
     }
     const wanted = new Set<string>();
     for (const w of list) {
-      wanted.add(TM_PREFIX + (w.id || ''));
+      wanted.add(TM_PREFIX + scopePrefix + (w.id || ''));
     }
 
     const fails: string[] = [];
     let removed = 0;
-    for (const m of mine) {
-      const marker: string = (m.description || '').split('|')[0];
-      if (wanted.has(marker) || typeof m.id !== 'number') {
-        continue;
-      }
-      const staleId: number = m.id;
-      try {
-        await labeled('清理旧日程', () => cal.deleteEvent(staleId));
-        removed++;
-      } catch (e) {
-        fails.push(errText(e as Object));
-      }
-    }
-
     let upserted = 0;
     for (const w of list) {
-      const marker: string = TM_PREFIX + (w.id || '');
+      const marker: string = TM_PREFIX + scopePrefix + (w.id || '');
+      const legacyMarker: string = TM_PREFIX + (w.id || '');
       const title: string = w.title || '未命名';
       const startMs = w.allDay
         ? fromLocal(w.date || toDateStr(now), '00:00')
@@ -415,7 +404,8 @@ export class HarmonyCalendar {
         upserted++;
         /* 先写后删：中途失败时旧条目还在，不会两头落空 */
         for (const m of mine) {
-          if ((m.description || '').split('|')[0] === marker && typeof m.id === 'number') {
+          const oldMarker: string = (m.description || '').split('|')[0];
+          if ((oldMarker === marker || (scopePrefix.length > 0 && oldMarker === legacyMarker)) && typeof m.id === 'number') {
             const oldId: number = m.id;
             try {
               await labeled('替换旧日程', () => cal.deleteEvent(oldId));
@@ -427,6 +417,21 @@ export class HarmonyCalendar {
         }
       } catch (e) {
         fails.push(errText(e as Object));
+      }
+    }
+    // 新条目都写入成功后再清理过期条目；中途失败时保留原有提醒，供下次重试。
+    if (fails.length === 0) {
+      for (const m of mine) {
+        const oldMarker: string = (m.description || '').split('|')[0];
+        if (scopePrefix.length > 0 && !oldMarker.startsWith(TM_PREFIX + scopePrefix)) continue;
+        if (wanted.has(oldMarker) || typeof m.id !== 'number') continue;
+        const staleId: number = m.id;
+        try {
+          await labeled('清理旧日程', () => cal.deleteEvent(staleId));
+          removed++;
+        } catch (e) {
+          fails.push(errText(e as Object));
+        }
       }
     }
     return JSON.stringify({

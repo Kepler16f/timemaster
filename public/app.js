@@ -2,7 +2,7 @@
 'use strict';
 
 const PALETTE = ['#FF6B6B','#4ECDC4','#5B8FF9','#F6BD16','#9270CA','#73D13D','#FF9C6E','#36CFC9'];
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.7.1';
 const VIEW_KEY = 'tm:view';
 const WEEK_FIT_KEY = 'tm:weekFit'; // 周视图一屏四格（默认）还是收成一屏七格
 const DAYVIEW_KEY = 'tm:dayView'; // 日视图开关，默认关（设置-外观里可打开）
@@ -361,6 +361,7 @@ function openSettings(){
   syncSnapUI();
   syncNotifySw();
   syncHolidayUI();
+  if(window.FeaturesUI) FeaturesUI.renderReminders();
   $('#appVersion').textContent='v'+APP_VERSION;
   showScreen('settingsScreen');
 }
@@ -1106,6 +1107,7 @@ function updateSyncChip(){
   /* 云端读不到这个文件（多半是网盘账号不对）：把账号摊开说，别让「待同步」一直挂着让人猜 */
   else if(s.missing && s.dirty) el.textContent='⚠ 待写入：'+(s.lastError||'网盘上找不到该空间文件');
   else if(s.missing) el.textContent='⚠ '+(s.lastError||'网盘上找不到该空间文件');
+  else if(s.lastError) el.textContent='⚠ 同步未完成 · 点此查看';
   else el.textContent = s.dirty? '待同步（离线可写）' : s.lastSync? '已同步 '+new Date(s.lastSync).toLocaleTimeString() : '';
 }
 $('#syncBtn').onclick=()=>{
@@ -1190,7 +1192,7 @@ function occurrences(data, fromStr, toStr){
     const ev=data.events[id];
     const owner=Store.resolve(data, ev.ownerId);
     if(!memberOn(owner) || !data.members[owner]) return;
-    IcsParser.expandOccurrences(ev, fromStr, toStr).forEach(ds=>{ (byDay[ds]=byDay[ds]||[]).push(ev); });
+    IcsParser.expandEvents(ev, fromStr, toStr).forEach(item=>{ (byDay[item.displayDate]=byDay[item.displayDate]||[]).push(item); });
   });
   return byDay;
 }
@@ -1633,6 +1635,7 @@ function openDetail(ev, data, ds){
   if(ev.allDay || !ev.start) lines.push('全天');
   if(ev.rrule) lines.push(`重复：${repeatText(ev.rrule)}`);
   if(ev.rem!=null) lines.push(`提醒：${remText(ev.rem)}`);
+  if(ev.editedOccurrence) lines.push('这一次单独调整过（原定 '+ev.occurrenceDate+'）');
   if(ev.type==='work'||ev.type==='rest') lines.push(`类型：${ev.type==='work'?'班（调休上班）':'休（放假）'}`);
   if(ev.location) lines.push(`地点：${ev.location}`);
   if(ev.calDisp||ev.calAcct) lines.push(`来自日历：${ev.calDisp}${ev.calAcct?'（'+ev.calAcct+'）':''}`);
@@ -1648,6 +1651,7 @@ function openDetail(ev, data, ds){
   $('#detailDelete').classList.toggle('hidden', !mine);
   $('#detailEdit').classList.toggle('hidden', !mine);
   $('#detailLockNote').classList.toggle('hidden', mine);
+  if(window.FeaturesUI) FeaturesUI.renderReminderDetail(ev, detailCode);
   $('#detailModal').hidden=false;
 }
 function remText(min){
@@ -1687,14 +1691,29 @@ function renderDetailRsvp(ev, data, code){
   }
 }
 $('#detailClose').onclick=()=>{ $('#detailModal').hidden=true; };
-$('#detailEdit').onclick=()=>{
+$('#detailEdit').onclick=async()=>{
   if(!detailEvent) return;
   const ev=detailEvent;
   $('#detailModal').hidden=true;
-  openEventModal(null, ev);
+  if(ev.rrule){
+    const choice=await ask({title:'修改重复日程',text:'要修改这一次，还是整个重复日程？',options:[{v:'one',t:'仅这一次'},{v:'all',t:'整个重复日程'}]});
+    if(choice!=='one' && choice!=='all') return;
+    if(choice==='one') { openEventModal(detailDate,ev,null,ev.occurrenceDate||detailDate); return; }
+  }
+  openEventModal(null, Store.get(detailCode).events[ev.id]);
 };
 $('#detailDelete').onclick=async()=>{
   if(!detailEvent) return;
+  if(detailEvent.rrule){
+    const choice=await ask({title:'删除重复日程',text:'要取消这一次，还是删除整个重复日程？',options:[{v:'one',t:'仅取消这一次'},{v:'all',t:'删除整个重复日程'}]});
+    if(choice!=='one' && choice!=='all') return;
+    if(choice==='one'){
+      if(Store.updateOccurrence(detailCode||state.code,detailEvent.id,detailEvent.occurrenceDate||detailDate,null)){
+        $('#detailModal').hidden=true; toast('已取消这一次，其他日期保留');
+      }
+      return;
+    }
+  }
   if(!await uiConfirm('删除日程',`删除「${detailEvent.title}」？删除会同步给空间内所有成员。`,'删除')) return;
   if(Store.deleteEvent(detailCode||state.code, detailEvent.id)){ $('#detailModal').hidden=true; toast('已删除'); }
   else toast('只有创建者可以删除这条日程');
@@ -1703,12 +1722,16 @@ $('#detailDelete').onclick=async()=>{
 /* ---------- 新建 / 编辑日程 ---------- */
 let editingEvent=null;
 let editingCode=null; // 编辑的是哪个空间的日程（聚合视图/详情里可能不是当前空间）
-function openEventModal(presetDate,ev,pre){
+let editingOccurrence=null, reminderEdited=false;
+function openEventModal(presetDate,ev,pre,occurrenceDate){
   editingEvent=ev||null;
+  editingOccurrence=occurrenceDate||null; reminderEdited=false;
   editingCode=ev?(detailCode||state.code):state.code;
   $('#eventModalTitle').textContent=ev?'编辑日程':'新建日程（归属于我）';
+  if(editingOccurrence) $('#eventModalTitle').textContent='编辑这一次日程';
   $('#evTitle').value=ev?ev.title:'';
   $('#evDate').value=(ev?ev.date:null)||presetDate||state.day||todayStr();
+  if(editingOccurrence) $('#evDate').value=ev.displayDate||presetDate||editingOccurrence;
   $('#evAllDay').checked=ev?!!ev.allDay:false;
   $('#timeRow').style.display=$('#evAllDay').checked?'none':'flex';
   $('#evStart').value=(ev&&ev.start)||'09:00'; $('#evEnd').value=(ev&&ev.end)||'10:00';
@@ -1716,6 +1739,9 @@ function openEventModal(presetDate,ev,pre){
   $('#evLocation').value=(ev&&ev.location)||'';
   $('#evRem').value=(ev&&ev.rem!=null)?String(ev.rem):'none';
   fillRepeatForm(ev?ev.rrule:null);
+  $('#evRepeat').disabled=!!editingOccurrence;
+  if(editingOccurrence) $('#evRepMore').classList.add('hidden');
+  $('#eventReminderNote').textContent=ReminderSync.status(editingCode).enabled?'已开启自动回写；保存后会更新系统日历。':'选好提醒后，还需要写入系统日历；可在设置里开启自动回写。';
   /* 从共同空闲点进来：日期和时段都按选中的空档预填 */
   if(pre){
     $('#evAllDay').checked=false;
@@ -1725,6 +1751,7 @@ function openEventModal(presetDate,ev,pre){
   $('#eventModal').hidden=false;
 }
 $('#eventCancel').onclick=()=>{ $('#eventModal').hidden=true; editingEvent=null; };
+$('#evRem').onchange=()=>{ reminderEdited=true; };
 $('#evAllDay').onchange=(e)=>{ $('#timeRow').style.display=e.target.checked?'none':'flex'; };
 
 /* ---------- 重复细节行：选了频率才展开，不重复的日程不必占四行空白 ---------- */
@@ -1815,13 +1842,13 @@ function findConflict(code, ev, ignoreId){
     const o=data.events[id];
     if(o.type==='work' || o.type==='rest') continue;
     if(String(Store.resolve(data,o.ownerId))!==String(who)) continue;
-    const occ=IcsParser.expandOccurrences(o, ev.date, shiftDay(ev.date, 30));
+    const occ=IcsParser.expandEvents(o, ev.date, shiftDay(ev.date, 30));
     for(let j=0;j<occ.length;j++){
-      if(days.indexOf(occ[j])<0) continue;
-      const s1=isAllDay(o)?0:toMin(o.start);
-      const e1=isAllDay(o)?1440:(o.end?toMin(o.end):s1+60);
-      if(ev.allDay || isAllDay(o)){ if(s0<e1 && s1<e0) return { ev:o, date:occ[j] }; }
-      else if(s0<e1 && s1<e0) return { ev:o, date:occ[j] };
+      const item=occ[j];
+      if(days.indexOf(item.displayDate)<0) continue;
+      const s1=isAllDay(item)?0:toMin(item.start);
+      const e1=isAllDay(item)?1440:(item.end?toMin(item.end):s1+60);
+      if(s0<e1 && s1<e0) return { ev:item, date:item.displayDate };
     }
   }
   return null;
@@ -1829,7 +1856,7 @@ function findConflict(code, ev, ignoreId){
 async function doEventSave(){
   const date=$('#evDate').value; if(!date) return toast('请选择日期');
   const allDay=$('#evAllDay').checked;
-  const rrule=repeatFromForm();
+  const rrule=editingOccurrence?null:repeatFromForm();
   if(rrule&&rrule.until&&rrule.until<date) return toast('「直到某天」要晚于开始日期');
   const remVal=$('#evRem').value;
   const ev={
@@ -1856,9 +1883,10 @@ async function doEventSave(){
   let sysBack=null;
   if(editingEvent){
     if(date!==editingEvent.date) ev.endDate=null; // 改了日期，原来的多天区间不再成立
-    ok=Store.updateEvent(code, editingEvent.id, ev);
+    if(CalBridge.sysHandle(editingEvent.sourceUid) && !reminderEdited && editingEvent.rem==null) delete ev.rem;
+    ok=editingOccurrence ? Store.updateOccurrence(code,editingEvent.id,editingOccurrence,ev) : Store.updateEvent(code, editingEvent.id, ev);
     /* 从系统日历导入的日程：改动要回到它原来所在的那个日历，改前先逐条确认，且永不删除 */
-    if(ok && CalBridge.sysHandle(editingEvent.sourceUid)){
+    if(ok && !editingOccurrence && CalBridge.sysHandle(editingEvent.sourceUid)){
       sysBack={ before:editingEvent, after:Object.assign({}, editingEvent, ev) };
     }
   } else {
@@ -1867,8 +1895,8 @@ async function doEventSave(){
     Store.addEvent(code, ev2);
   }
   state.day=date; syncYm();
-  editingEvent=null; editingCode=null;
-  $('#eventModal').hidden=true; toast(ok?'已保存，稍后自动同步':'只有创建者可以编辑这条日程');
+  editingEvent=null; editingCode=null; editingOccurrence=null;
+  $('#eventModal').hidden=true; toast(ok?(ev.rem!=null&&!ReminderSync.status(code).enabled?'已保存；请回写系统日历以启用提醒':'已保存，稍后自动同步'):'只有创建者可以编辑这条日程');
   pushWidgetSoon();
   if(sysBack) await syncBackToSystemCalendar(sysBack.before, sysBack.after);
 }
@@ -1891,6 +1919,7 @@ async function syncBackToSystemCalendar(before, after){
   if((before.title||'')!==(after.title||'')) changed.push('标题：'+before.title+' → '+after.title);
   if((before.desc||'')!==(after.desc||'')) changed.push('备注有改动');
   if((before.location||'')!==(after.location||'')) changed.push('地点：'+(before.location||'无')+' → '+(after.location||'无'));
+  if(Object.prototype.hasOwnProperty.call(after,'rem') && before.rem!==after.rem) changed.push('提醒：'+(before.rem==null?'未设置':remText(before.rem))+' → '+(after.rem==null?'不提醒':remText(after.rem)));
   if(!changed.length) return; // 没改到系统日历里的字段，不必打扰
   const go=await uiConfirm('写回系统日历',
     '这条日程来自系统日历「'+cal+'」。\n\n'+changed.join('\n')+
@@ -1994,19 +2023,9 @@ $('#importSysSave').onclick=async()=>{
 $('#writeBackBtn').onclick=async()=>{
   if(!state.code) return;
   const data=Store.get(state.code); if(!data) return;
-  const list=Object.keys(data.events).map(k=>data.events[k])
-    .filter(e=>memberOn(e.ownerId) && e.type!=='work' && e.type!=='rest')
-    /* 来自系统日历的条目不参与全量回写：它们只按逐条确认改回原日历，
-       否则会被复制进本应用自己的日历，变成同一件事的两份 */
-    .filter(e=>!CalBridge.sysHandle(e.sourceUid))
-    /* 写进系统日历时注明是谁的日程，回读再导入时也能靠这行标记跳过自己的条目 */
-    .map(e=>Object.assign({}, e, { ownerName:memberOf(data,e.ownerId).name }));
-  if(!list.length) return toast('没有可回写的日程');
   try{
-    await CalBridge.ensurePermission();
-    const r=await CalBridge.writeBack(list);
-    if(r && r.failed) toast(`已回写 ${r.upserted} 条，清理 ${r.removed} 条；${r.failed} 条失败：${r.error}`);
-    else toast(`已回写系统日历：更新 ${r.upserted} 条，清理 ${r.removed} 条`);
+    const r=await ReminderSync.sync(state.code);
+    toast(`已回写系统日历：更新 ${r.upserted} 条，清理 ${r.removed} 条`);
     $('#importModal').hidden=true;
   }catch(e){ toast(e.message); if(e.needSettings) $('#permBtn').hidden=false; }
 };
@@ -2080,10 +2099,10 @@ $('#backupFile').onchange=async(e)=>{
   let doc=null;
   try{ doc=JSON.parse(await f.text()); }catch(err){ return toast('这个文件不是有效的 JSON 备份'); }
   const n=doc&&doc.events?Object.keys(doc.events).length:0;
-  if(!doc||doc.v!==2||!n) return toast('备份文件不对：要的是本 App 导出的 .json（不是 .ics）');
+  if(!doc||doc.v!==2||!doc.events||typeof doc.events!=='object'||Array.isArray(doc.events)) return toast('备份文件不对：要的是本 App 导出的 .json（不是 .ics）');
   const nm=doc.name||'空间 '+String(doc.code||'');
   const choice=await ask({ title:'找回「'+nm+'」',
-    text:'备份里有 '+n+' 条日程、'+Object.keys(doc.members||{}).length+' 位成员。怎么找回？',
+    text:'备份里有 '+n+' 条日程、'+Object.keys(doc.members||{}).length+' 位成员、'+Object.keys(doc.polls||{}).length+' 项时间投票。怎么找回？',
     options:[
       { v:'merge', t: state.code ? '补进当前空间「'+((Store.get(state.code)||{}).name||state.code)+'」（只补现在没有的）' : '作为新空间找回（换一个邀请码）' },
       { v:'new', t:'作为新空间找回（网盘上新建一份，绝不动现有数据）' },
@@ -2093,7 +2112,7 @@ $('#backupFile').onchange=async(e)=>{
     if(choice==='merge'){
       if(!state.code) throw new Error('先随便进入一个空间，或在别处选「作为新空间」');
       const r=Store.importBackup(state.code, doc);
-      toast('找回 '+r.events+' 条日程'+(r.members?'、'+r.members+' 位成员':'')+'，稍后自动同步上网盘');
+      toast('找回 '+r.events+' 条日程'+(r.members?'、'+r.members+' 位成员':'')+(r.polls?'、'+r.polls+' 项投票':'')+'，稍后自动同步上网盘');
     } else {
       const code=genCode();
       const doc2=Object.assign({}, doc, { code, name:(doc.name||'找回的空间'), deletions:doc.deletions||{}, retired:doc.retired||{} });
@@ -2173,7 +2192,7 @@ function allOccurrences(fromStr,toStr){
   allSpacesData().forEach((sp)=>{
     Object.keys(sp.data.events).forEach((id)=>{
       const ev=sp.data.events[id];
-      IcsParser.expandOccurrences(ev, fromStr, toStr).forEach((ds)=>{ (byDay[ds]=byDay[ds]||[]).push({ ev, sp }); });
+      IcsParser.expandEvents(ev, fromStr, toStr).forEach((item)=>{ (byDay[item.displayDate]=byDay[item.displayDate]||[]).push({ ev:item, sp }); });
     });
   });
   return byDay;
@@ -2311,6 +2330,7 @@ $('#freeRun').onclick=()=>{
         openEventModal(day.date, null, { start:s.s, end:s.e });
       };
       box.appendChild(row);
+      if(window.FeaturesUI && state.view!=='all') FeaturesUI.addCandidateButton(box,day.date,s);
     });
   });
   if(!n) box.appendChild(el('p','import-tip','这个范围里没有共同空档——试试放宽时段、缩短最短时长，或少选几个人。'));
@@ -2365,26 +2385,25 @@ function runSearch(){
     if(!sp.data) return;
     Object.keys(sp.data.events||{}).forEach((id)=>{
       const e=sp.data.events[id];
-      const hay=[e.title, e.desc, e.location].filter(Boolean).join(' ').toLowerCase();
-      if(hay.indexOf(q)<0) return;
       const owner=memberOf(sp.data, e.ownerId);
-      const dates = e.rrule ? IcsParser.expandOccurrences(e, from, to) : [e.date];
-      dates.slice(0, 14).forEach((ds)=>{
+      const items=e.rrule?IcsParser.expandEvents(e,from,to):[Object.assign({},e,{displayDate:e.date})];
+      items.filter((item)=>[item.title,item.desc,item.location].filter(Boolean).join(' ').toLowerCase().includes(q)).slice(0, 14).forEach((item)=>{
+        const ds=item.displayDate;
         hits++;
         const row=el('button','batch-row sr-row'); row.type='button';
         const dot=el('span','dot'); dot.style.background=owner.color;
         row.appendChild(dot);
         const col=el('span','sr-body');
-        col.appendChild(el('span','sr-title', e.title||'未命名日程'));
+        col.appendChild(el('span','sr-title', item.title||'未命名日程'));
         const d=IcsParser.parseDate(ds);
         let sub=`${d.getMonth()+1}月${d.getDate()}日 ${WD_ZH[d.getDay()]}`;
-        if(e.start && !e.allDay) sub+=` ${e.start}${e.end?'–'+e.end:''}`;
+        if(item.start && !item.allDay) sub+=` ${item.start}${item.end?'–'+item.end:''}`;
         sub+=' · '+spaceTag(sp.data)+owner.name;
         if(sp.data!==undefined && state.view==='all') sub+=' · '+sp.name;
-        if(e.location) sub+=' · 📍'+e.location;
+        if(item.location) sub+=' · 📍'+item.location;
         col.appendChild(el('span','sr-sub',sub));
         row.appendChild(col);
-        row.onclick=()=>{ $('#searchModal').hidden=true; state.day=ds; syncYm(); renderCalendar(true); openDetail(e, sp.data, ds); };
+        row.onclick=()=>{ $('#searchModal').hidden=true; state.day=ds; syncYm(); renderCalendar(true); openDetail(item, sp.data, ds); };
         box.appendChild(row);
       });
       if(hits>80) return;

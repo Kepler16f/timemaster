@@ -1,6 +1,6 @@
 {
   "name": "reunion-desktop",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Reunion 桌面端 Tauri 壳（前端资源来自仓库 public/，构建前由 scripts/sync-desktop-web.mjs 同步）",
   "scripts": {

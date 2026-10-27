@@ -77,8 +77,16 @@
     if (!x.s || !y.s) return !x.s ? x : y;
     return String(x.s) >= String(y.s) ? x : y;
   }
+  function pollVotes(data, poll) {
+    const votes = {};
+    for (const key in (poll.votes || {})) {
+      const resolved = resolveId(data, key), candidate = poll.votes[key];
+      if (!votes[resolved] || newer(candidate, votes[resolved])) votes[resolved] = candidate;
+    }
+    return votes;
+  }
   function merge(local, remote) {
-    const out = { v: 2, code: remote.code || local.code, members: {}, events: {}, deletions: {}, retired: {} };
+    const out = { v: 2, code: remote.code || local.code, members: {}, events: {}, deletions: {}, retired: {}, polls: {} };
     /* 名称按 nameUpdatedAt LWW；均无时间戳时远端优先（兼容旧数据） */
     const ln = local.nameUpdatedAt || 0, rn = remote.nameUpdatedAt || 0;
     out.name = (rn >= ln && remote.name) ? remote.name : (local.name || remote.name);
@@ -120,7 +128,27 @@
       }
     }
     for (const id in out.events) {
+      const le = local.events && local.events[id], re = remote.events && remote.events[id];
+      if (le && re && (le.exceptions || re.exceptions)) {
+        const exceptions = {};
+        for (const src of [le.exceptions || {}, re.exceptions || {}]) {
+          for (const ds in src) if (!exceptions[ds] || newer(src[ds], exceptions[ds])) exceptions[ds] = src[ds];
+        }
+        out.events[id] = Object.assign({}, out.events[id], { exceptions });
+      }
       if (out.deletions[id] && out.deletions[id] >= out.events[id].updatedAt) delete out.events[id];
+    }
+    for (const src of [local.polls || {}, remote.polls || {}]) {
+      for (const id in src) {
+        const prev = out.polls[id], next = src[id];
+        if (!prev) { out.polls[id] = next; continue; }
+        const winner = newer(next, prev) ? next : prev;
+        const votes = Object.assign({}, prev.votes || {});
+        for (const key in (next.votes || {})) if (!votes[key] || newer(next.votes[key], votes[key])) votes[key] = next.votes[key];
+        const a = prev.resolution, b = next.resolution;
+        const resolution = !a ? b : !b ? a : newer(b, a) ? b : a;
+        out.polls[id] = Object.assign({}, winner, { votes, resolution: resolution || null });
+      }
     }
     return out;
   }
@@ -128,7 +156,8 @@
   /* ---------- 本地缓存 ---------- */
   function persist(code) {
     const c = cache[code];
-    localStorage.setItem(localKey(code), JSON.stringify({ data: c.data, etag: c.etag, dirty: c.dirty, seeds: c.seeds, gone: c.gone || 0 }));
+    localStorage.setItem(localKey(code), JSON.stringify({ data: c.data, etag: c.etag, dirty: c.dirty, seeds: c.seeds, gone: c.gone || 0,
+      lastSync: c.lastSync || 0, lastAttempt: c.lastAttempt || 0, lastError: c.lastError || '', conflicts: c.conflicts || 0, pending: c.pending || {} }));
   }
   function loadLocal(code) {
     if (cache[code]) return cache[code];
@@ -136,7 +165,19 @@
     try { saved = JSON.parse(localStorage.getItem(localKey(code))); } catch (e) { /* noop */ }
     cache[code] = saved ? { data: saved.data, etag: saved.etag, dirty: !!saved.dirty, seeds: saved.seeds || {}, syncing: false, gone: saved.gone || 0 }
       : { data: null, etag: null, dirty: false, seeds: {}, syncing: false, gone: 0 };
+    Object.assign(cache[code], { lastSync: saved && saved.lastSync || 0, lastAttempt: saved && saved.lastAttempt || 0,
+      lastError: saved && saved.lastError || '', conflicts: saved && saved.conflicts || 0, pending: saved && saved.pending || {} });
     return cache[code];
+  }
+
+  function changedEvents(before, after) {
+    const changes = {};
+    const a = before && before.events || {}, b = after && after.events || {};
+    new Set(Object.keys(a).concat(Object.keys(b))).forEach((id) => {
+      if (JSON.stringify(a[id]) === JSON.stringify(b[id])) return;
+      changes[id] = { id, title: (b[id] || a[id] || {}).title || '未命名日程', kind: !b[id] ? '删除' : !a[id] ? '新增' : '修改' };
+    });
+    return changes;
   }
 
   /* 成员名单按「只增不减」处理：网盘没有事务，一次过期覆写就能把刚加入的人抹掉
@@ -425,6 +466,8 @@
     const c = loadLocal(code);
     if (c.syncing) return;
     c.syncing = true;
+    c.lastAttempt = Date.now();
+    notify(code);
     try {
       for (let round = 0; round < 3; round++) {
         const r = await Dav.get(code, (c.dirty || !c.data) ? null : c.etag);
@@ -454,6 +497,8 @@
             /* 合并结果比云端多成员 = 有人（包括自己）被旧版覆盖挤掉了，得把名单推回去；
                只补本机不写回的话，云端会一直缺人，别人看到的还是旧人数 */
             if (Object.keys(c.data.members).some((id) => remoteMembers.indexOf(id) < 0)) c.dirty = true;
+            if (JSON.stringify(c.data.polls || {}) !== JSON.stringify(remote.polls || {})) c.dirty = true;
+            if (Object.keys(c.data.events).some((id) => JSON.stringify(c.data.events[id].exceptions || {}) !== JSON.stringify(remote.events && remote.events[id] && remote.events[id].exceptions || {}))) c.dirty = true;
           }
           /* 被管理员移出：成员表里自己那条带着别人写的 out 标记。
              本机不做任何静默删除——交给界面问用户要不要移除本机副本 */
@@ -487,8 +532,9 @@
                清空云端后的重建走的也是这条路。 */
             const written = JSON.stringify(c.data);
             const p = await Dav.put(code, written, null);
-            if (p.status === 412) { persist(code); notify(code); continue; }
+            if (p.status === 412) { c.conflicts = (c.conflicts || 0) + 1; persist(code); notify(code); continue; }
             c.dirty = JSON.stringify(c.data) !== written;
+            c.pending = c.dirty ? changedEvents(JSON.parse(written), c.data) : {};
             c.missing = 0; c.lastError = '';
             if (p.etag) c.etag = p.etag;
             if (c.dirty) scheduleSync();
@@ -500,20 +546,24 @@
            也不能退回 If-None-Match:* 的「仅新建」——文件本来就在，必定 412 */
         const written = JSON.stringify(c.data);
         const p = await Dav.put(code, written, c.etag || undefined);
-        if (p.status === 412) { c.etag = null; continue; }
+        if (p.status === 412) { c.conflicts = (c.conflicts || 0) + 1; c.etag = null; continue; }
         // 等待 PUT 时用户可能继续编辑；只确认这次上传的快照，后来的改动仍须同步。
         c.dirty = JSON.stringify(c.data) !== written;
+        c.pending = c.dirty ? changedEvents(JSON.parse(written), c.data) : {};
         if (p.etag) c.etag = p.etag;
         if (c.dirty) scheduleSync();
         persist(code); notify(code);
         break;
       }
-      c.lastSync = Date.now();
+      if (!c.dirty && !c.missing) { c.lastSync = Date.now(); c.lastError = ''; c.pending = {}; }
+      else if (c.dirty && !c.lastError) c.lastError = '还有变更等待上传，稍后会继续同步';
     } catch (e) {
       c.lastError = e.message;
       console.warn('sync failed (offline ok):', e.message); // 离线/弱网：保持 dirty，下次重试
     } finally {
       c.syncing = false;
+      persist(code);
+      notify(code);
     }
   }
 
@@ -529,7 +579,9 @@
   function mutate(code, fn) {
     const c = loadLocal(code);
     if (!c.data) return;
+    const before = JSON.parse(JSON.stringify(c.data));
     fn(c.data);
+    c.pending = Object.assign(c.pending || {}, changedEvents(before, c.data));
     c.dirty = true;
     persist(code);
     notify(code);
@@ -694,7 +746,9 @@
   const api = {
     createSpace, openRemote, ensureMember, upsertSpaceMeta, attach,
     get(code) { return loadLocal(code).data; },
-    status(code) { const c = loadLocal(code); return { dirty: c.dirty, syncing: c.syncing, lastSync: c.lastSync, exists: !!c.data, lastError: c.lastError || '', missing: c.missing || 0 }; },
+    status(code) { const c = loadLocal(code); return { dirty: c.dirty, syncing: c.syncing, lastSync: c.lastSync,
+      lastAttempt: c.lastAttempt || 0, conflicts: c.conflicts || 0, pending: Object.values(c.pending || {}),
+      exists: !!c.data, lastError: c.lastError || '', missing: c.missing || 0 }; },
     syncCode, scheduleSync, onChange, onSpaceGone: (fn) => goneListeners.push(fn), mutate,
     listSpaces() { try { return JSON.parse(localStorage.getItem('tm:spaces') || '[]'); } catch (e) { return []; } },
     removeSpace(code) {
@@ -774,7 +828,7 @@
       if (!loadLocal(code).data) throw new Error('本机还没有这个空间的副本');
       if (doc.dissolved) throw new Error('这份备份所属的空间已被创建者解散，找回没有意义');
       const now = Date.now();
-      const res = { events: 0, members: 0 };
+      const res = { events: 0, members: 0, polls: 0 };
       mutate(code, (d) => {
         Object.keys(doc.members || {}).forEach((k) => {
           if (!d.members[k]) { d.members[k] = Object.assign({}, doc.members[k]); res.members++; }
@@ -787,6 +841,13 @@
           ev.updatedAt = Math.max(now, (src.updatedAt || 0), (tomb[id] || 0) + 1);
           d.events[id] = ev;
           res.events++;
+        });
+        Object.keys(doc.polls || {}).forEach((id) => {
+          if (!doc.polls[id]) return;
+          if (!d.polls) d.polls = {};
+          if (d.polls[id]) return;
+          d.polls[id] = JSON.parse(JSON.stringify(doc.polls[id]));
+          res.polls++;
         });
       });
       return res;
@@ -824,6 +885,71 @@
         dd.events[id] = next;
       });
       return true;
+    },
+    updateOccurrence(code, id, originalDate, patch) {
+      const data = loadLocal(code).data, ev = data && data.events[id];
+      if (!ev || !ev.rrule || !isMine(ev.ownerId, data)) return false;
+      const raw = Object.assign({}, ev); delete raw.exceptions;
+      if (!IcsParser.expandOccurrences(raw, originalDate, originalDate).length) return false;
+      if (patch && patch.date && (!/^\d{4}-\d{2}-\d{2}$/.test(patch.date) || IcsParser.dstr(IcsParser.parseDate(patch.date)) !== patch.date)) return false;
+      mutate(code, (d) => {
+        const cur = d.events[id], prev = (cur.exceptions || {})[originalDate];
+        const edit = { cancelled: patch === null, updatedAt: Math.max(Date.now(), (prev && prev.updatedAt || 0) + 1), by: App.clientId };
+        if (patch) {
+          edit.patch = {};
+          ['title','date','endDate','allDay','start','end','type','desc','location','rem'].forEach((key) => {
+            if (Object.prototype.hasOwnProperty.call(patch, key)) edit.patch[key] = patch[key];
+          });
+        }
+        cur.exceptions = Object.assign({}, cur.exceptions || {}, { [originalDate]: edit });
+      });
+      return true;
+    },
+    createPoll(code, title, options) {
+      const data = loadLocal(code).data;
+      if (!data || !options || options.length < 2 || options.length > 8) throw new Error('请选择 2–8 个候选时间');
+      const member = data.members[resolveId(data, myId())];
+      if (!member || member.out || data.dissolved) throw new Error('请先加入这个空间');
+      const slots = options.map((o, i) => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(o.date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(o.start) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(o.end) || o.end <= o.start) throw new Error('候选时间需要有效日期，且结束晚于开始');
+        if (IcsParser.dstr(IcsParser.parseDate(o.date)) !== o.date) throw new Error('候选日期无效');
+        return { id: 'o' + i, date: o.date, start: o.start, end: o.end };
+      });
+      if (new Set(slots.map((o) => o.date + o.start + o.end)).size !== slots.length) throw new Error('候选时间不能重复');
+      const id = genId('p');
+      mutate(code, (d) => {
+        if (!d.polls) d.polls = {};
+        d.polls[id] = { id, title: String(title || '约个时间').trim().slice(0, 80) || '约个时间', createdBy: myId(),
+          options: slots, votes: {}, updatedAt: Date.now(), by: App.clientId };
+      });
+      return id;
+    },
+    votePoll(code, id, choices) {
+      const data = loadLocal(code).data, p = data && data.polls && data.polls[id];
+      const m = data && data.members[resolveId(data, myId())];
+      if (!p || p.resolution || !m || m.out || data.dissolved) return false;
+      const valid = (choices || []).filter((key) => p.options.some((o) => o.id === key));
+      mutate(code, (d) => {
+        const poll = d.polls[id], key = resolveId(d, myId()), old = pollVotes(d, poll)[key];
+        poll.votes = Object.assign({}, poll.votes || {}, { [key]: { choices: [...new Set(valid)], updatedAt: Math.max(Date.now(), (old && old.updatedAt || 0) + 1), by: App.clientId } });
+      });
+      return true;
+    },
+    pollVotes,
+    confirmPoll(code, id, optionId) {
+      const data = loadLocal(code).data, poll = data && data.polls && data.polls[id];
+      const member = data && data.members[resolveId(data, myId())];
+      if (!poll || !member || member.out || !isMine(poll.createdBy, data) || poll.resolution || data.dissolved) return null;
+      const option = poll.options.find((o) => o.id === optionId);
+      if (!option) return null;
+      const eventId = 'poll-' + id;
+      mutate(code, (d) => {
+        const t = Math.max(Date.now(), (d.deletions[eventId] || 0) + 1);
+        d.events[eventId] = { id: eventId, ownerId: resolveId(d, myId()), title: poll.title, date: option.date,
+          start: option.start, end: option.end, allDay: false, type: 'normal', updatedAt: t, by: App.clientId };
+        d.polls[id] = Object.assign({}, d.polls[id], { resolution: { optionId, eventId, updatedAt: t, by: App.clientId } });
+      });
+      return eventId;
     },
     deleteEvent(code, id) {
       const d = loadLocal(code).data;

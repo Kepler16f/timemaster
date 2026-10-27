@@ -173,6 +173,8 @@ public class AndroidCalendarPlugin extends Plugin {
     @PluginMethod
     public void sync(PluginCall call) {
         JSArray events = call.getArray("events", new JSArray());
+        String scope = call.getString("scope", "");
+        String scopePrefix = scope.isEmpty() ? "" : scope + ":";
         SharedPreferences prefs = getContext().getSharedPreferences(PREFS, 0);
         long calId;
         try {
@@ -184,22 +186,36 @@ public class AndroidCalendarPlugin extends Plugin {
         SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
         Map<String, String> tz = new HashMap<>();
         String tzid = TimeZone.getDefault().getID();
-        int ok = 0, rm = 0;
+        int ok = 0, rm = 0, failed = 0;
         Set<String> keep = new HashSet<>();
         try {
             for (int i = 0; i < events.length(); i++) {
                 JSONObject ev = events.getJSONObject(i);
-                String spaceId = ev.getString("id");
-                if (spaceId == null) continue;
+                String rawId = ev.getString("id");
+                if (rawId == null) continue;
+                String spaceId = scopePrefix + rawId;
                 keep.add(spaceId);
                 ContentValues cv = toValues(calId, ev, df, tzid);
-                if (cv == null) continue;
+                if (cv == null) { failed++; continue; }
                 Long sysId = prefs.getLong("m:" + spaceId, -1);
+                // 首次按空间回写时接管旧版映射，避免同一日程变成两份。
+                if (sysId <= 0 && !scopePrefix.isEmpty()) {
+                    long legacyId = prefs.getLong("m:" + rawId, -1);
+                    if (legacyId > 0) {
+                        sysId = legacyId;
+                        prefs.edit().putLong("m:" + spaceId, legacyId).remove("m:" + rawId).apply();
+                    }
+                }
                 long effId;
                 if (sysId > 0) {
-                    getContext().getContentResolver().update(
+                    int updated = getContext().getContentResolver().update(
                             ContentUris.withAppendedId(Events.CONTENT_URI, sysId), cv, null, null);
-                    effId = sysId;
+                    if (updated > 0) effId = sysId;
+                    else {
+                        Uri inserted = getContext().getContentResolver().insert(Events.CONTENT_URI, cv);
+                        effId = inserted != null ? ContentUris.parseId(inserted) : -1;
+                        if (effId > 0) prefs.edit().putLong("m:" + spaceId, effId).apply();
+                    }
                 } else {
                     Uri inserted = getContext().getContentResolver().insert(Events.CONTENT_URI, cv);
                     if (inserted != null) {
@@ -213,22 +229,25 @@ public class AndroidCalendarPlugin extends Plugin {
                 /* 只数真正落到日历上的：insert 失败（权限被收回、日历被删）也记一笔 ok，
                    前端会据此以为回写成功并把这条日程当成「已在系统日历里」 */
                 if (effId > 0) {
-                    applyReminder(effId, ev.optInt("rem", -1));
+                    if (!applyReminder(effId, ev.optInt("rem", -1))) failed++;
                     ok++;
-                }
+                } else failed++;
             }
             // 删除已不在列表中的旧映射
             Map<String, ?> all = prefs.getAll();
             SharedPreferences.Editor ed = prefs.edit();
             for (String key : all.keySet()) {
+                // 新日程或提醒未全部写入时保留旧条目，待下次成功后再清理。
+                if (failed > 0) break;
                 if (!key.startsWith("m:")) continue;
                 String sid = key.substring(2);
+                if (!scopePrefix.isEmpty() && !sid.startsWith(scopePrefix)) continue;
                 if (!keep.contains(sid)) {
                     long sysId = (Long) all.get(key);
                     try {
                         getContext().getContentResolver().delete(
                                 ContentUris.withAppendedId(Events.CONTENT_URI, sysId), null, null);
-                    } catch (Exception ignored) { }
+                    } catch (Exception ignored) { failed++; continue; }
                     ed.remove(key);
                     rm++;
                 }
@@ -241,6 +260,8 @@ public class AndroidCalendarPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("upserted", ok);
         ret.put("removed", rm);
+        ret.put("failed", failed);
+        ret.put("error", failed > 0 ? "部分日程或提醒未写入，请检查系统日历权限后重试" : "");
         call.resolve(ret);
     }
 
@@ -267,7 +288,10 @@ public class AndroidCalendarPlugin extends Plugin {
             }
             /* 改的是别人日历里的日程：前端只有在用户真的选了提醒时才带 rem。
                没带就什么也别动——按 -1 走一遍 applyReminder 会把这条日程原有的提醒抹掉。 */
-            if (ev.has("rem")) applyReminder(sysId, ev.optInt("rem", 0));
+            if (ev.has("rem") && !applyReminder(sysId, ev.optInt("rem", 0))) {
+                call.reject("日程已写入，但提醒设置失败，请检查系统日历权限");
+                return;
+            }
             JSObject ret = new JSObject();
             ret.put("updated", n);
             call.resolve(ret);
@@ -314,22 +338,18 @@ public class AndroidCalendarPlugin extends Plugin {
      * 事件开始前的提醒（分钟）：-1 = 不提醒（删掉已有提醒），0 = 准时，>0 = 提前 n 分钟。
      * Reminders 是独立表：先删后插，保证换提醒/取消提醒都收口成一份。
      */
-    private void applyReminder(long eventId, int minutes) {
-        if (minutes < 0) {
-            getContext().getContentResolver().delete(Reminders.CONTENT_URI,
-                    Reminders.EVENT_ID + "=?", new String[]{String.valueOf(eventId)});
-            return;
-        }
+    private boolean applyReminder(long eventId, int minutes) {
         try {
             getContext().getContentResolver().delete(Reminders.CONTENT_URI,
                     Reminders.EVENT_ID + "=?", new String[]{String.valueOf(eventId)});
+            if (minutes < 0) return true;
             ContentValues cv = new ContentValues();
             cv.put(Reminders.EVENT_ID, eventId);
             cv.put(Reminders.MINUTES, minutes);
             cv.put(Reminders.METHOD, Reminders.METHOD_ALERT);
-            getContext().getContentResolver().insert(Reminders.CONTENT_URI, cv);
+            return getContext().getContentResolver().insert(Reminders.CONTENT_URI, cv) != null;
         } catch (Exception ignored) {
-            // 个别机型的 Reminders 写入限制：日程本身已写成功，提醒缺失不该连累整次同步
+            return false;
         }
     }
 

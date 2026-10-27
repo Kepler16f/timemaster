@@ -73,7 +73,7 @@
     /* 只有用户在这条外来日程上明确选了提醒才带上这个字段。
        导入时我们读不到原日历里已设的提醒，字段缺省 = 用户没动过提醒，
        此时写 -1 等于把别人日历里那条日程原有的提醒抹掉。原生侧按「有没有带 rem」决定要不要动提醒表。 */
-    if (ev.rem != null && ev.rem >= 0) payload.rem = Math.max(0, Math.round(ev.rem));
+    if (Object.prototype.hasOwnProperty.call(ev, 'rem')) payload.rem = ev.rem == null ? -1 : Math.max(0, Math.round(ev.rem));
     if (Cal) { await Cal.edit(payload); return true; }
     if (isHar()) { await Transport.harmonyCall('calEdit', [JSON.stringify(payload)]); return true; }
     return false;
@@ -112,9 +112,11 @@
   }
 
   /* 回写：全量 upsert + 删除未传入项（原生侧维护映射，只动本 App 的条目） */
-  async function writeBack(events) {
-    if (Cal) return Cal.sync({ events: events.map(wire) });
-    if (isHar()) return await Transport.harmonyCall('calWrite', [JSON.stringify({ events: events.map(wire) })]);
+  async function writeBack(events, scope) {
+    const payload = { events: events.map(wire) };
+    if (scope) payload.scope = String(scope);
+    if (Cal) return Cal.sync(payload);
+    if (isHar()) return await Transport.harmonyCall('calWrite', [JSON.stringify(payload)]);
     throw new Error('系统日历同步需在 App 内使用');
   }
 

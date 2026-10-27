@@ -61,6 +61,9 @@
         continue;
       }
       if (/^END:VEVENT$/i.test(line)) {
+        if (inEvent && cur && cur.cancelled && cur.recurrenceId && !cur.start) {
+          cur.start = { date: cur.recurrenceId, time: '', allDay: true };
+        }
         if (inEvent && cur && cur.start) {
           const ev = {
             title: cur.title, date: cur.start.date, allDay: cur.start.allDay,
@@ -69,6 +72,12 @@
             desc: cur.desc, location: cur.location, rrule: cur.rrule, sourceUid: cur.uid,
             type: cur.type === 'work' || cur.type === 'rest' ? cur.type : 'normal',
           };
+          if (cur.recurrenceId) ev._recurrenceId = cur.recurrenceId;
+          if (cur.exdates) {
+            ev.exceptions = {};
+            cur.exdates.forEach((date) => { ev.exceptions[date] = { cancelled: true, updatedAt: 0, by: '' }; });
+          }
+          if (cur.cancelled) ev._cancelled = true;
           if (cur.rem != null) ev.rem = cur.rem;
           // 全天跨多日：记录结束日（DTEND 排他），供渲染逐日出现
           if (cur.start.allDay && cur.end && cur.end.allDay) {
@@ -97,10 +106,22 @@
       else if (key === 'X-REUNION-TYPE') cur.type = val.trim().toLowerCase();
       else if (key === 'UID') cur.uid = val;
       else if (key === 'RRULE') cur.rrule = parseRRule(val);
+      else if (key === 'EXDATE') cur.exdates = (cur.exdates || []).concat(val.split(',').map((v) => parseDt(v, head).date));
+      else if (key === 'RECURRENCE-ID') cur.recurrenceId = parseDt(val, head).date;
+      else if (key === 'STATUS' && val.toUpperCase() === 'CANCELLED') cur.cancelled = true;
       else if (key === 'DTSTART') cur.start = parseDt(val, head);
       else if (key === 'DTEND') cur.end = parseDt(val, head);
     }
-    return events;
+    const main = events.filter((ev) => !ev._recurrenceId);
+    events.filter((ev) => ev._recurrenceId).forEach((ev) => {
+      const parent = main.find((p) => p.sourceUid && p.sourceUid === ev.sourceUid && p.rrule);
+      if (!parent) { if (!ev._cancelled) main.push(ev); return; }
+      if (!parent.exceptions) parent.exceptions = {};
+      const patch = Object.assign({}, ev); delete patch._recurrenceId; delete patch._cancelled; delete patch.rrule; delete patch.sourceUid;
+      parent.exceptions[ev._recurrenceId] = { cancelled: !!ev._cancelled, patch, updatedAt: 0, by: '' };
+    });
+    main.forEach((ev) => { delete ev._recurrenceId; delete ev._cancelled; });
+    return main;
   }
 
   /* 渲染期展开：给定原始事件与日期区间 [from,to]（含），返回出现的日期列表。
@@ -119,7 +140,7 @@
     return m ? m[0] : null;
   }
 
-  function expandOccurrences(ev, fromStr, toStr) {
+  function baseOccurrences(ev, fromStr, toStr) {
     const out = [];
     const from = parseDate(fromStr), to = parseDate(toStr);
     const start = parseDate(ev.date);
@@ -184,6 +205,31 @@
     }
     return out;
   }
+  function expandEvents(ev, fromStr, toStr) {
+    const dates = new Set(baseOccurrences(ev, fromStr, toStr));
+    const exceptions = ev.rrule ? ev.exceptions || {} : {};
+    Object.keys(exceptions).forEach((ds) => {
+      const edit = exceptions[ds], date = edit.patch && edit.patch.date;
+      if (!edit.cancelled && date && date >= fromStr && date <= toStr && baseOccurrences(ev, ds, ds).length) dates.add(ds);
+    });
+    const out = [];
+    dates.forEach((ds) => {
+      const edit = exceptions[ds];
+      if (edit && edit.cancelled) return;
+      const instance = Object.assign({}, ev, edit && edit.patch || {});
+      instance.id = ev.id; instance.ownerId = ev.ownerId;
+      const date = edit && edit.patch && edit.patch.date || ds;
+      if (date < fromStr || date > toStr) return;
+      // date 保持原始规则起点；occurrenceDate 与 displayDate 区分「改哪次」和「画哪天」。
+      instance.date = ev.date;
+      instance.occurrenceDate = ev.rrule ? ds : null;
+      instance.displayDate = date;
+      if (edit && edit.patch) instance.editedOccurrence = true;
+      out.push(instance);
+    });
+    return out.sort((a, b) => a.displayDate.localeCompare(b.displayDate));
+  }
+  function expandOccurrences(ev, fromStr, toStr) { return expandEvents(ev, fromStr, toStr).map((e) => e.displayDate); }
   function daysInMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); }
 
   /* ---------- 序列化回 .ics（导出用）----------
@@ -229,12 +275,32 @@
     const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Reunion//TimeMaster//CN',
       'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'X-WR-CALNAME:' + icalEsc(name)];
     if (tz) L.push('X-WR-TIMEZONE:' + tz);
-    (events || []).forEach((ev, i) => {
+    const expanded = [];
+    (events || []).forEach((ev, index) => {
+      if (!ev) return;
+      const base = Object.assign({}, ev, { _exportUid: ev.sourceUid || ev.id || ('x' + index) });
+      expanded.push(base);
+      if (!ev || !ev.rrule) return;
+      Object.keys(ev.exceptions || {}).forEach((ds) => {
+        const edit = ev.exceptions[ds];
+        const override = Object.assign({}, base, edit.patch || {}, { rrule: null, exceptions: null,
+          _recurrenceId: ds, _originalTime: ev.start || '', _originalAllDay: !!ev.allDay || !ev.start, _cancelled: !!edit.cancelled });
+        override.date = edit.patch && edit.patch.date || ds;
+        expanded.push(override);
+      });
+    });
+    expanded.forEach((ev, i) => {
       if (!ev || !ev.date) return;
       const v = ['BEGIN:VEVENT',
-        'UID:' + icalEsc((ev.sourceUid || ev.id || ('x' + i)) + '@reunion'),
+        'UID:' + icalEsc((ev._exportUid || ev.sourceUid || ev.id || ('x' + i)) + '@reunion'),
         'DTSTAMP:' + stamp,
         'SUMMARY:' + icalEsc(ev.title || '未命名日程')];
+      if (ev._recurrenceId) {
+        v.push(ev._originalAllDay ? 'RECURRENCE-ID;VALUE=DATE:' + ymd(ev._recurrenceId)
+          : tz ? 'RECURRENCE-ID;TZID=' + tz + ':' + ymd(ev._recurrenceId) + 'T' + hms(ev._originalTime)
+            : 'RECURRENCE-ID:' + localToUtc(ev._recurrenceId, ev._originalTime));
+        if (ev._cancelled) v.push('STATUS:CANCELLED');
+      }
       if (ev.allDay || !ev.start) {
         /* DTEND 是排他的：全天到 10 月 3 日要写成 10 月 4 日；没填时间的也按全天走 */
         v.push('DTSTART;VALUE=DATE:' + ymd(ev.date),
@@ -290,7 +356,7 @@
     return s;
   }
 
-  window.IcsParser = { parseICS, parseRRule, rruleToString, expandOccurrences, dstr, parseDate, untilStr, DAYMAP, buildICS, localZone };
+  window.IcsParser = { parseICS, parseRRule, rruleToString, expandOccurrences, expandEvents, dstr, parseDate, untilStr, DAYMAP, buildICS, localZone };
 
   function rruleToString(r) {
     if (!r) return '';

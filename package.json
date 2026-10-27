@@ -1,6 +1,6 @@
 {
   "name": "timemaster",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Reunion — 多人共享日程（Android / HarmonyOS NEXT / Windows / Linux · WebDAV 同步）",
   "scripts": {

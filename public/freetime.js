@@ -20,13 +20,14 @@
       const ev = data.events[id];
       if (!want.has(String(resolve(data, ev.ownerId)))) return;
       if (ev.type === 'work' || ev.type === 'rest') return; // 假勤标记不算占用
-      IcsParser.expandOccurrences(ev, fromStr, toStr).forEach((ds) => {
-        if (ev.allDay || !ev.start) {
+      IcsParser.expandEvents(ev, fromStr, toStr).forEach((instance) => {
+        const ds = instance.displayDate;
+        if (instance.allDay || !instance.start) {
           busy.push({ date: ds, s: winStart, e: winEnd });
           return;
         }
-        const s = toMin(ev.start);
-        let e = ev.end ? toMin(ev.end) : Math.min(s + 60, 1440);
+        const s = toMin(instance.start);
+        let e = instance.end ? toMin(instance.end) : Math.min(s + 60, 1440);
         if (e <= s) e = 1440; // 跨零点画到当天末尾（与时间轴同口径）
         busy.push({ date: ds, s, e });
       });

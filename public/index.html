@@ -91,7 +91,7 @@
         <button id="syncBtn" class="sync-btn" title="立即同步">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.6-5.7L20 8.5"/><path d="M20 12a8 8 0 0 1-13.6 5.7L4 15.5"/><polyline points="20 3.5 20 8.5 15 8.5"/><polyline points="4 20.5 4 15.5 9 15.5"/></svg>
         </button>
-        <span id="syncState" class="sync-state"></span>
+        <button type="button" id="syncState" class="sync-state sync-details" title="查看同步详情"></button>
       </div>
     </div>
 
@@ -228,6 +228,10 @@
           <label class="set-inline" for="notifySw"><span>开</span><input type="checkbox" id="notifySw"></label>
         </div>
         <p class="set-note">应用在后台时，成员的新增/修改/应答会以系统通知提醒（前台不打扰）。日程本身的开工提醒请用「回写系统日历」+ 编辑日程里的「提醒」，由系统日历的闹钟负责——应用没开也能响。</p>
+        <div class="set-row"><label for="calendarAuto">自动回写当前空间日程与提醒</label><input type="checkbox" id="calendarAuto" /></div>
+        <p class="set-note" id="calendarAutoStatus">进入空间后可设置。提醒由系统日历处理，请确认它的通知已开启。</p>
+        <button class="big-btn ghost" id="calendarRetry">立即更新系统日历</button>
+        <button class="big-btn ghost hidden" id="calendarPermission">打开日历权限设置</button>
       </div>
 
       <div class="set-group">
@@ -403,6 +407,7 @@
           <option value="1440">提前 1 天</option>
         </select>
       </label>
+      <p class="set-note" id="eventReminderNote">选好提醒后，还需要写入系统日历；可在设置里开启自动回写。</p>
       <label>重复
         <select id="evRepeat">
           <option value="none">不重复</option>
@@ -460,12 +465,30 @@
       <div class="detail-head"><span class="dot" id="detailDot"></span><h3 id="detailTitle"></h3></div>
       <div id="detailMeta" class="detail-meta"></div>
       <div id="detailRsvp" class="detail-rsvp hidden"></div>
+      <p id="detailReminderState" class="set-note"></p>
       <p id="detailLockNote" class="set-note hidden">该日程由他人创建，仅创建者可删除。</p>
       <div class="modal-actions">
         <button id="detailClose" class="action-btn">关闭</button>
         <button id="detailEdit" class="action-btn primary hidden">编辑</button>
         <button id="detailDelete" class="action-btn danger">删除</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 同步与投票弹窗放在通用确认弹窗之前，确认操作才能显示在最上层。 -->
+  <div class="modal-mask" id="syncModal" hidden>
+    <div class="modal"><h3>同步详情</h3><div id="syncSummary" class="detail-meta"></div><div id="syncPending" class="batch-list"></div>
+      <div class="modal-actions"><button id="syncClose" class="action-btn">关闭</button><button id="syncRetry" class="action-btn primary">立即重试</button></div>
+    </div>
+  </div>
+  <div class="modal-mask" id="pollModal" hidden>
+    <div class="modal"><h3>时间投票</h3>
+      <div id="pollDraft" hidden><label>约什么<input id="pollTitle" type="text" maxlength="80" placeholder="例如：周末聚餐" /></label>
+        <p class="set-note">选 2–8 个候选时间，成员可以多选；发起人最后确认一个时间，自动生成日程。</p>
+        <div id="pollCandidates" class="batch-list"></div><button id="pollCreate" class="big-btn">发起投票</button>
+      </div>
+      <div id="pollList" class="batch-list"></div>
+      <div class="modal-actions"><button id="pollClose" class="action-btn">关闭</button></div>
     </div>
   </div>
 
@@ -678,7 +701,9 @@
         </label>
       </div>
       <button class="big-btn" id="freeRun">🔍 计算空档</button>
+      <button class="big-btn ghost" id="pollsOpen">查看本空间时间投票</button>
       <div class="batch-list" id="freeResults"></div>
+      <button class="big-btn ghost" id="pollDraftOpen">用已选候选时间发起投票（0/8）</button>
       <div class="modal-actions">
         <button id="freeClose" class="action-btn">关闭</button>
       </div>
@@ -724,6 +749,8 @@
   <script src="freetime.js"></script>
   <script src="notify.js"></script>
   <script src="widget.js"></script>
+  <script src="reminders.js"></script>
   <script src="app.js"></script>
+  <script src="features-ui.js"></script>
 </body>
 </html>
