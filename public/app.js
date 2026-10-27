@@ -1677,7 +1677,7 @@ function renderDetailRsvp(ev, data, code){
     btns.appendChild(b);
   });
   box.appendChild(btns);
-  const others=Object.keys(r).filter((k)=>k!==meKey);
+  const others=Object.keys(r).filter((k)=>k!==meKey && r[k] && r[k].s);
   if(others.length){
     const txt=others.map((k)=>{
       const m=data.members[Store.resolve(data,k)]||data.members[k]||{};

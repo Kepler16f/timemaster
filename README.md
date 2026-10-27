@@ -146,12 +146,15 @@ ROADMAP.md              设计与取舍的详细记录
 - CI 产出的 HAP **未签名**，所以 Release 上它是 `reunion-vX.Y.Z-unsigned.hap`；主名 `reunion-vX.Y.Z.hap` 留给本机 `scripts/hap-sign-local.sh` 签好的那份（受限日历权限的授权载体是签名 profile，私钥不进仓库）。
 - artifact 一律以原始文件形式上传（`archive: false`），不套 zip。
 - Release 说明由 `scripts/release-notes.sh` 取 CHANGELOG 里比仓库上已有最新标签新的那些小节，原样写进 Release。
-- 版本号只在 `public/app.js` 的 `APP_VERSION` 一处定义，CI 从这里解析出 tag 与产物文件名；改版本时同步 `android-shell/app/build.gradle` 的 `versionName/versionCode` 与 `harmony-shell` 的 `versionName`。
+- 版本名称只在 `public/app.js` 的 `APP_VERSION` 一处定义；修改后运行 `npm run version:sync`，统一根目录及锁文件、桌面 npm/Tauri/Cargo、Android/HarmonyOS 的版本名称。两端移动工程的 `versionCode` 仍需在发版时一起递增；`npm run check` 会检查一致性。
+- `checks.yml` 在 push / PR 时使用 Node 20 和 24 检查版本、JavaScript 语法和核心逻辑测试；测试只扫描 `tests/`，不包含本机下载目录和其他工作树。
 
 ## 七、本地开发
 
 ```bash
 npm ci
+npm run check                    # 版本一致性 / JavaScript 语法 / HTML 脚本引用
+npm test                         # 全部核心与桥接模拟测试
 node tests/core.test.js            # 核心逻辑
 node tests/harmony-bridge.test.js  # 鸿蒙桥（模拟）
 
@@ -171,6 +174,26 @@ node scripts/sync-harmony-web.mjs
 - 节假日调休数据内置 2025/2026 两年；之后的年份要等国务院公布（每年 11 月），在设置里在线更新，未收录年份只显示周六日与手工班/休。农历支持范围 1901–2049。
 - 桌面小组件/服务卡片显示的是最后一次打开应用时的快照，没有后台刷新。
 - 网盘同步是「整文件覆盖 + ETag 乐观锁」，空间成员很多（>20 人）或日程上万条时会有明显冲突重试。
-- 循环日程的 RRULE 只支持 FREQ/INTERVAL/BYDAY/BYMONTHDAY/UNTIL/COUNT（含农历年重复），`COUNT` 的精确截断在展开时被忽略（以 UNTIL 与 400 次上限兜底）。
+- 循环日程的 RRULE 支持 FREQ/INTERVAL/BYDAY/BYMONTHDAY/UNTIL/COUNT（含农历年重复）；`COUNT` 从原始起点计数，窗口外的历史出现也占次数。尚不支持完整的 RFC 5545 规则与单次实例例外编辑。
 - 邮箱登录是可选功能，未配置 Supabase 时完全不影响使用。
 - 浏览器不是产品形态：没有原生桥就没有网络与系统日历能力，仅用于调 UI。
+
+## 九、Supabase 邮箱登录维护
+
+免费项目可能因过去一周数据库活动不足而休眠，并非必须定期收发验证码。休眠后在 [项目控制台](https://supabase.com/dashboard/project/ruwdnrousioplhyfqvfb) 选择 Resume project，等待恢复完成，再检查 Authentication 的 Email provider 和邮件投递配置。不要另建项目或更换 UID，以免破坏已有账户与空间成员的对应关系。
+
+首次部署保活前，在 SQL Editor 执行 `supabase/migrations/20261027000000_reunion_healthcheck.sql`。它创建一个 `security invoker` 函数，只返回健康状态与服务端时间，不查询用户或日程，不发送邮件，也不写业务数据。随后执行：
+
+```bash
+npm run health:supabase
+# 仅排查 Auth 时可用；这条命令不能视为数据库保活成功：
+node scripts/supabase-health.mjs --auth-only
+```
+
+`supabase-health.yml` 在默认分支每 6 小时运行一次，北京时间约为 02:17 / 08:17 / 14:17 / 20:17，也支持手动运行。它先检查邮箱登录 provider，再调用数据库函数；网络或临时服务错误会重试，函数未安装、密钥失效等情况明确失败。默认复用 `public/auth.js` 中的公开项目配置，可用仓库变量 `SUPABASE_URL` 和 Secret `SUPABASE_ANON_KEY` 覆盖；只需 anon/publishable key，禁止使用 service_role 或管理令牌。
+
+保活成功不等于邮件投递成功。默认 SMTP 有收件人和发送频率限制，正式对外使用应配置自己的 SMTP，并在调整后用本人邮箱手动完成一次验证码登录验证。
+
+免费档没有持续在线保证，外部调度也可能故障。公开 GitHub 仓库连续 60 天没有活动时，定时工作流可能被自动停用；需用独立巡检检查最近成功时间和工作流状态，必要时重新启用并运行。需要提供持续在线保证时应采用付费方案。
+
+参考：[Supabase 项目休眠规则](https://supabase.com/docs/guides/platform/free-project-pausing)、[Supabase SMTP 限制](https://supabase.com/docs/guides/auth/auth-smtp)、[GitHub 定时工作流停用规则](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/disable-and-enable-workflows)。

@@ -91,7 +91,7 @@ function mkEvent(id, ownerId, updatedAt, rsvp) {
     const r = store.get('R4').events.e1.rsvp;
     eq('rsvp: 自己的键写上', r.zDev.s, 'yes');
     eq('rsvp: 别人的键不动', r.b, { s: 'no', t: 100 });
-    eq('rsvp: 清除自己的', (store.setRsvp('R4', 'e1', null), store.get('R4').events.e1.rsvp.zDev), undefined);
+    eq('rsvp: 清除自己的状态并保留撤回墓碑', (store.setRsvp('R4', 'e1', null), store.get('R4').events.e1.rsvp.zDev.s), '');
     eq('rsvp: 别人的键在清除后仍在', !!store.get('R4').events.e1.rsvp.b, true);
     /* 别人的日程也能答：正文编辑权归创建者，出勤是自己的事 */
     eq('rsvp: 他人的日程允许应答', store.setRsvp('R4', 'e1', 'maybe'), true);

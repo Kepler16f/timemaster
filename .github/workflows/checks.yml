@@ -1,0 +1,30 @@
+name: Repository checks
+
+on:
+  push:
+    branches: [main]
+    paths: ['public/**', 'tests/**', 'scripts/**', 'package*.json', '*-shell/**', '.github/workflows/checks.yml']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # 核心测试只依赖 Node 内置模块，无需安装原生壳依赖。
+      - run: npm run check
+      - run: npm test

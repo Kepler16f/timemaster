@@ -28,6 +28,17 @@
 
   function ready() { const c = cfg(); return !!(c && c.url && c.anon); }
 
+  function serviceError(status, body) {
+    const code = body && (body.code || body.error_code);
+    if (status === 429) return '验证码请求太频繁，请稍后再试，并先检查收件箱和垃圾邮件';
+    if (status === 502 || status === 503 || status === 504 || status === 404) {
+      return '邮箱登录服务暂时不可用，请稍后重试；本机日程仍可使用。维护者请检查 Supabase 项目是否休眠';
+    }
+    if (code === 'otp_expired') return '验证码无效或已过期，请使用最新邮件中的验证码';
+    if (status >= 500) return '邮箱服务暂时无法处理请求，请稍后重试；如果持续收不到邮件，请让维护者检查邮件发送配置';
+    return body && (body.error_description || body.msg || (typeof body.error === 'string' ? body.error : body.error && (body.error.msg || body.error.message))) || ('HTTP ' + status);
+  }
+
   async function req(path, body, token) {
     if (!ready()) throw new Error('登录服务暂未开放，可直接使用本机身份');
     const c = cfg();
@@ -35,21 +46,25 @@
     if (token) headers.Authorization = 'Bearer ' + token;
     const r = await Transport.request({ method: 'POST', url: c.url + '/auth/v1' + path, headers, body: JSON.stringify(body) });
     let j = null; try { j = JSON.parse(r.text); } catch (e) { /* noop */ }
-    if (r.status >= 400) {
-      const m = j && (j.error_description || j.msg || (j.error && (j.error.msg || j.error.message))) || ('HTTP ' + r.status);
-      throw new Error('登录服务：' + m);
+    if (r.status < 200 || r.status >= 300) {
+      const error = new Error('登录服务：' + serviceError(r.status, j));
+      error.status = r.status;
+      error.code = j && (j.code || j.error_code) || '';
+      throw error;
     }
     return j || {};
   }
 
   /* 发送 6 位邮箱验证码（需 Supabase 控制台 Email 登录勾选 One-time tokens） */
   async function sendOtp(email) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '')) throw new Error('邮箱格式不对');
-    return req('/otp', { email: email.toLowerCase(), create_user: true });
+    email = String(email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('邮箱格式不对');
+    return req('/otp', { email, create_user: true });
   }
 
   async function verifyOtp(email, token) {
-    const j = await req('/verify', { email: (email || '').toLowerCase(), token: (token || '').trim(), type: 'email' });
+    email = String(email || '').trim().toLowerCase();
+    const j = await req('/verify', { email, token: (token || '').trim(), type: 'email' });
     if (!j.access_token || !j.user) throw new Error('验证码不正确或已过期');
     const s = { access_token: j.access_token, refresh_token: j.refresh_token, uid: j.user.id, email: (email || '').toLowerCase(), at: Date.now() };
     saveSession(s);

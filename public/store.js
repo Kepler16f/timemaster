@@ -68,6 +68,15 @@
     if (a.updatedAt !== b.updatedAt) return a.updatedAt > b.updatedAt;
     return (a.by || '') > (b.by || '');
   }
+  function newerRsvp(x, y) {
+    if (!x) return y;
+    if (!y) return x;
+    const xt = x.t || 0, yt = y.t || 0;
+    if (xt !== yt) return xt > yt ? x : y;
+    // 同邮箱的两台设备可能在同一毫秒应答：同分时撤回优先，其余按状态排序，合并顺序无关。
+    if (!x.s || !y.s) return !x.s ? x : y;
+    return String(x.s) >= String(y.s) ? x : y;
+  }
   function merge(local, remote) {
     const out = { v: 2, code: remote.code || local.code, members: {}, events: {}, deletions: {}, retired: {} };
     /* 名称按 nameUpdatedAt LWW；均无时间戳时远端优先（兼容旧数据） */
@@ -101,8 +110,7 @@
         keys.forEach((k) => {
           if (rsvp[k]) return;
           const x = ra[k] || null, y = rb[k] || null;
-          const xt = x && x.t ? x.t : 0, yt = y && y.t ? y.t : 0;
-          rsvp[k] = xt >= yt ? x : (y || x);
+          rsvp[k] = newerRsvp(x, y);
         });
         out.events[id] = Object.assign({}, out.events[id], { rsvp });
       }
@@ -477,20 +485,26 @@
                无条件覆盖会在错的网盘里凭空造一份同名文档，两人从此各写各的、
                谁也看不见对方新加入的成员；文件真在的话必定 412，下一轮正常拉取合并。
                清空云端后的重建走的也是这条路。 */
-            const p = await Dav.put(code, JSON.stringify(c.data), null);
+            const written = JSON.stringify(c.data);
+            const p = await Dav.put(code, written, null);
             if (p.status === 412) { persist(code); notify(code); continue; }
-            c.dirty = false; c.missing = 0; c.lastError = '';
+            c.dirty = JSON.stringify(c.data) !== written;
+            c.missing = 0; c.lastError = '';
             if (p.etag) c.etag = p.etag;
+            if (c.dirty) scheduleSync();
             persist(code); notify(code); break;
           }
         }
         if (!c.dirty || !c.data) { persist(code); notify(code); break; }
         /* etag 缺失时宁可无条件覆盖（文档已经过上面的全量合并），
            也不能退回 If-None-Match:* 的「仅新建」——文件本来就在，必定 412 */
-        const p = await Dav.put(code, JSON.stringify(c.data), c.etag || undefined);
+        const written = JSON.stringify(c.data);
+        const p = await Dav.put(code, written, c.etag || undefined);
         if (p.status === 412) { c.etag = null; continue; }
-        c.dirty = false;
+        // 等待 PUT 时用户可能继续编辑；只确认这次上传的快照，后来的改动仍须同步。
+        c.dirty = JSON.stringify(c.data) !== written;
         if (p.etag) c.etag = p.etag;
+        if (c.dirty) scheduleSync();
         persist(code); notify(code);
         break;
       }
@@ -787,9 +801,10 @@
         const e = d.events[id];
         if (!e) return;
         const r = Object.assign({}, e.rsvp || {});
-        if (status) r[myId()] = { s: String(status), t: Date.now() };
-        else delete r[myId()];
-        if (Object.keys(r).length) e.rsvp = r; else delete e.rsvp;
+        const key = myId();
+        // 删除键会被离线旧副本复活。空状态是撤回墓碑，时间戳还要压过本机刚写的那一次。
+        r[key] = { s: status ? String(status) : '', t: Math.max(Date.now(), ((r[key] || {}).t || 0) + 1) };
+        e.rsvp = r;
         /* 绝不动 e.updatedAt / e.by：整条日程按 updatedAt 做 LWW，应答时抬时间戳等于让这台设备
            的旧正文去顶掉别人刚改的标题时间。出勤只是多一个键，合并那边逐键并集已经收敛，
            写回靠的是 mutate 标的 dirty，不靠时间戳 */

@@ -1,0 +1,35 @@
+name: Supabase health
+
+on:
+  schedule:
+    # 每 6 小时一次，避开整点拥堵；北京时间 02:17 / 08:17 / 14:17 / 20:17。
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['public/auth.js', 'scripts/supabase-health.mjs', 'supabase/**', '.github/workflows/supabase-health.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    # fork 不应替原仓库反复调用同一个 Supabase 项目。
+    if: github.repository == 'Kepler16f/timemaster'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 检查邮箱登录与数据库健康状态
+        env:
+          # 可覆盖客户端默认值；只接受公开密钥，绝不需要 service_role。
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: npm run health:supabase

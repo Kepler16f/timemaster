@@ -1,12 +1,16 @@
 {
   "name": "timemaster",
-  "version": "0.2.1",
+  "version": "0.7.0",
   "private": true,
-  "description": "Reunion — 多人共享日程（Android APK / HarmonyOS NEXT HAP · 坚果云 WebDAV 同步）",
+  "description": "Reunion — 多人共享日程（Android / HarmonyOS NEXT / Windows / Linux · WebDAV 同步）",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test",
-    "sync": "npx cap sync android"
+    "test": "node scripts/test.mjs",
+    "check": "node scripts/check-repo.mjs",
+    "version:check": "node scripts/version.mjs --check",
+    "version:sync": "node scripts/version.mjs",
+    "health:supabase": "node scripts/supabase-health.mjs",
+    "sync": "node scripts/version.mjs && npx cap sync android"
   },
   "devDependencies": {
     "@capacitor/android": "^6.2.0",
